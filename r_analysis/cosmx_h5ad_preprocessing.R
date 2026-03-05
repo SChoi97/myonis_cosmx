@@ -30,6 +30,9 @@ nuclei_combined_h5ad <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/c
 myotube_combined_h5ad <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/cosmx_slides_combined/r_dataset/r_ready/greedy_myotube_combined.rready.h5ad"
 filtered_nuclei_h5ad <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/cosmx_slides_combined/r_dataset/r_ready/greedy_filtered_nuclei.rready.h5ad"
 metadata_csv_path <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/cosmx_slides_combined/r_dataset/r_ready/greedy_classifier_metadata.csv"
+# Optional shorthand: derive the 4 input paths above from savepath + prefix
+savepath <- NULL
+prefix <- ""
 
 # Metadata behavior
 classification_column <- "Predicted Class"
@@ -81,15 +84,42 @@ myotube_id_col_candidates <- c("myotube_id", "local_id", "local.id")
 # ---------------- OPTIONAL CLI OVERRIDES ----------------
 # Usage example:
 # Rscript cosmx_h5ad_preprocessing.R \
-#   nuclei_combined_h5ad=/path/nuclei_combined.rready.h5ad \
-#   myotube_combined_h5ad=/path/myotube_combined.rready.h5ad \
-#   filtered_nuclei_h5ad=/path/filtered_nuclei.rready.h5ad \
-#   metadata_csv_path=/path/metadata_df.csv \
-#   output_dir=/path/output \
-#   classification_column='Predicted Class' \
-#   sigmoid_logits_column='Sigmoid Logits'
+#   --nuclei_combined_h5ad /path/nuclei_combined.rready.h5ad \
+#   --myotube_combined_h5ad /path/myotube_combined.rready.h5ad \
+#   --filtered_nuclei_h5ad /path/filtered_nuclei.rready.h5ad \
+#   --metadata_csv_path /path/metadata_df.csv \
+#   --output_dir /path/output \
+#   --classification_column 'Predicted Class' \
+#   --sigmoid_logits_column 'Sigmoid Logits'
+#
+# Or shorthand (mirrors cosmx_h5ad_to_rready.py outputs):
+# Rscript cosmx_h5ad_preprocessing.R \
+#   --savepath /path/to/r_ready \
+#   --prefix greedy_ \
+#   --output_dir /path/to/rds
 
 overrides <- parse_cli_overrides(commandArgs(trailingOnly = TRUE))
+
+# If savepath/prefix are provided, auto-derive input file paths unless explicitly set.
+if ("savepath" %in% names(overrides) || "prefix" %in% names(overrides)) {
+  savepath_cli <- if ("savepath" %in% names(overrides)) overrides[["savepath"]] else savepath
+  prefix_cli <- if ("prefix" %in% names(overrides)) overrides[["prefix"]] else prefix
+  if (!is.null(savepath_cli) && nzchar(as.character(savepath_cli))) {
+    if (is.null(prefix_cli)) prefix_cli <- ""
+    derived <- list(
+      nuclei_combined_h5ad = file.path(savepath_cli, paste0(prefix_cli, "nuclei_combined.rready.h5ad")),
+      myotube_combined_h5ad = file.path(savepath_cli, paste0(prefix_cli, "myotube_combined.rready.h5ad")),
+      filtered_nuclei_h5ad = file.path(savepath_cli, paste0(prefix_cli, "filtered_nuclei.rready.h5ad")),
+      metadata_csv_path = file.path(savepath_cli, paste0(prefix_cli, "classifier_metadata.csv"))
+    )
+    for (nm in names(derived)) {
+      if (!(nm %in% names(overrides))) {
+        overrides[[nm]] <- derived[[nm]]
+      }
+    }
+  }
+}
+
 apply_cli_overrides(overrides)
 
 # ---------------- VALIDATION ----------------

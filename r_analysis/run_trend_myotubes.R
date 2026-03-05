@@ -9,17 +9,23 @@ suppressPackageStartupMessages({
   library(dplyr)
 })
 
+script_dir <- local({
+  args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", args, value = TRUE)
+  if (length(file_arg) > 0) {
+    dirname(normalizePath(sub("^--file=", "", file_arg[1])))
+  } else if (!is.null(sys.frames()[[1]]$ofile)) {
+    dirname(normalizePath(sys.frames()[[1]]$ofile))
+  } else {
+    getwd()
+  }
+})
+
+source(file.path(script_dir, "utils", "preprocessing_utils.R"))
+
 # ---------------- USER INPUTS ----------------
 INPUT_PATH <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/r_dataset/processed_myotube_filtered.rds"
 OUTPUT_DIR <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/r_dataset/trend_regression_myotubes"
-dir.create(OUTPUT_DIR, recursive = TRUE, showWarnings = FALSE)
-
-# ---------------- LOAD INPUT ----------------
-myotube_filtered <- readRDS(INPUT_PATH)
-
-# Use filtered myotubes if present, else fallback to combined
-adata <- if (exists("myotube_filtered")) myotube_filtered else myotube_combined
-if (is.null(adata)) stop("No myotube object found (myotube_filtered or myotube_combined).")
 
 # ---------------- CONFIG ----------------
 min_expr_tubes <- 50
@@ -34,6 +40,39 @@ area_col_candidates <- c("area_px2", "Area", "area", "area_um2", "myotube_area",
 if (!use_ref_total %in% c("median", "mean")) {
   stop("use_ref_total must be 'median' or 'mean'.")
 }
+
+# ---------------- OPTIONAL CLI OVERRIDES ----------------
+# Supports:
+#   --KEY value
+#   --key=value
+#   key=value
+# Usage example:
+# Rscript run_trend_myotubes.R \
+#   --INPUT_PATH /path/processed_myotube_filtered.rds \
+#   --OUTPUT_DIR /path/trend_regression_myotubes \
+#   --top_n_genes 50 \
+#   --area_threshold NULL
+overrides <- parse_cli_overrides(commandArgs(trailingOnly = TRUE))
+area_threshold_set_null <- FALSE
+if ("area_threshold" %in% names(overrides)) {
+  raw_area <- tolower(trimws(overrides[["area_threshold"]]))
+  if (raw_area %in% c("null", "none")) {
+    area_threshold_set_null <- TRUE
+  }
+}
+apply_cli_overrides(overrides)
+if (area_threshold_set_null) {
+  area_threshold <- NULL
+}
+
+dir.create(OUTPUT_DIR, recursive = TRUE, showWarnings = FALSE)
+
+# ---------------- LOAD INPUT ----------------
+myotube_filtered <- readRDS(INPUT_PATH)
+
+# Use filtered myotubes if present, else fallback to combined
+adata <- if (exists("myotube_filtered")) myotube_filtered else myotube_combined
+if (is.null(adata)) stop("No myotube object found (myotube_filtered or myotube_combined).")
 
 pick_col <- function(df, candidates, label, required = TRUE) {
   hit <- candidates[candidates %in% colnames(df)][1]

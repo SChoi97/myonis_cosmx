@@ -8,15 +8,23 @@ suppressPackageStartupMessages({
   library(tibble)
 })
 
+script_dir <- local({
+  args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", args, value = TRUE)
+  if (length(file_arg) > 0) {
+    dirname(normalizePath(sub("^--file=", "", file_arg[1])))
+  } else if (!is.null(sys.frames()[[1]]$ofile)) {
+    dirname(normalizePath(sys.frames()[[1]]$ofile))
+  } else {
+    getwd()
+  }
+})
+
+source(file.path(script_dir, "utils", "preprocessing_utils.R"))
+
 # ---------------- USER INPUTS ----------------
 INPUT_PATH <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/cosmx_slides_combined/r_dataset/rds/processed_myonuclei.rds"
 OUTPUT_DIR <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/cosmx_slides_combined/r_dataset/deg"
-dir.create(OUTPUT_DIR, recursive = TRUE, showWarnings = FALSE)
-
-# ---------------- LOAD INPUT ----------------
-myonuclei <- readRDS(INPUT_PATH)
-adata <- myonuclei
-if (is.null(adata)) stop("`myonuclei` is NULL.")
 
 min_expr_cells <- 100
 alpha_padj <- 0.05
@@ -32,6 +40,38 @@ sigmoid_col_candidates <- c("Sigmoid_Logits", "Sigmoid Logits", "sigmoid_logits"
 # Saved so plotting notebooks can reuse expected defaults
 y_max_clip <- 30
 n_labels <- 15
+
+# ---------------- OPTIONAL CLI OVERRIDES ----------------
+# Supports:
+#   --KEY value
+#   --key=value
+#   key=value
+# Usage example:
+# Rscript run_deg_myonuclei.R \
+#   --INPUT_PATH /path/processed_myonuclei.rds \
+#   --OUTPUT_DIR /path/deg \
+#   --lfc_thr 0.25 \
+#   --eps 1e-6 \
+#   --sigmoid_logits_filter 0.2 0.8
+overrides <- parse_cli_overrides(commandArgs(trailingOnly = TRUE))
+sigmoid_filter_set_null <- FALSE
+if ("sigmoid_logits_filter" %in% names(overrides)) {
+  raw_sigmoid <- tolower(trimws(overrides[["sigmoid_logits_filter"]]))
+  if (raw_sigmoid %in% c("null", "none")) {
+    sigmoid_filter_set_null <- TRUE
+  }
+}
+apply_cli_overrides(overrides)
+if (sigmoid_filter_set_null) {
+  sigmoid_logits_filter <- NULL
+}
+
+dir.create(OUTPUT_DIR, recursive = TRUE, showWarnings = FALSE)
+
+# ---------------- LOAD INPUT ----------------
+myonuclei <- readRDS(INPUT_PATH)
+adata <- myonuclei
+if (is.null(adata)) stop("`myonuclei` is NULL.")
 
 pick_col <- function(df, candidates, label, required = TRUE) {
   hit <- candidates[candidates %in% colnames(df)][1]

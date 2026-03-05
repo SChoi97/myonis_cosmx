@@ -13,30 +13,80 @@ get_script_dir <- function() {
 parse_cli_overrides <- function(args) {
   out <- list()
   if (length(args) == 0) return(out)
-  for (a in args) {
-    if (!grepl("=", a, fixed = TRUE)) {
-      stop("Invalid argument (expected key=value): ", a)
+  i <- 1L
+  n <- length(args)
+  while (i <= n) {
+    a <- args[[i]]
+
+    # Supports: key=value and --key=value
+    if (grepl("=", a, fixed = TRUE)) {
+      parts <- strsplit(a, "=", fixed = TRUE)[[1]]
+      key <- parts[1]
+      value <- paste(parts[-1], collapse = "=")
+      key <- sub("^--", "", key)
+      key <- gsub("-", "_", key, fixed = TRUE)
+      if (!nzchar(key)) {
+        stop("Invalid argument key in: ", a)
+      }
+      out[[key]] <- value
+      i <- i + 1L
+      next
     }
-    parts <- strsplit(a, "=", fixed = TRUE)[[1]]
-    key <- parts[1]
-    value <- paste(parts[-1], collapse = "=")
-    out[[key]] <- value
+
+    # Supports: --key value, --key v1 v2 ..., and bare --flag (treated as TRUE)
+    if (startsWith(a, "--")) {
+      key <- sub("^--", "", a)
+      key <- gsub("-", "_", key, fixed = TRUE)
+      if (!nzchar(key)) {
+        stop("Invalid argument key in: ", a)
+      }
+
+      j <- i + 1L
+      vals <- character(0)
+      while (j <= n && !startsWith(args[[j]], "--")) {
+        vals <- c(vals, args[[j]])
+        j <- j + 1L
+      }
+
+      if (length(vals) > 0) {
+        # Multiple values are comma-joined for downstream coercion.
+        out[[key]] <- paste(vals, collapse = ",")
+        i <- j
+      } else {
+        out[[key]] <- "TRUE"
+        i <- i + 1L
+      }
+      next
+    }
+
+    stop("Invalid argument (expected key=value, --key=value, or --key value): ", a)
   }
   out
 }
 
 coerce_override <- function(raw_value, current_value) {
+  split_vals <- function(x) trimws(strsplit(as.character(x), ",", fixed = TRUE)[[1]])
+
   if (is.logical(current_value)) {
-    return(tolower(raw_value) %in% c("1", "true", "t", "yes", "y"))
+    vals <- split_vals(raw_value)
+    out <- tolower(vals) %in% c("1", "true", "t", "yes", "y")
+    if (length(current_value) <= 1) return(out[1])
+    return(out)
   }
   if (is.integer(current_value)) {
-    return(as.integer(raw_value))
+    vals <- split_vals(raw_value)
+    out <- as.integer(vals)
+    if (length(current_value) <= 1) return(out[1])
+    return(out)
   }
   if (is.numeric(current_value)) {
-    return(as.numeric(raw_value))
+    vals <- split_vals(raw_value)
+    out <- as.numeric(vals)
+    if (length(current_value) <= 1) return(out[1])
+    return(out)
   }
   if (is.character(current_value) && length(current_value) > 1) {
-    return(trimws(strsplit(raw_value, ",", fixed = TRUE)[[1]]))
+    return(split_vals(raw_value))
   }
   as.character(raw_value)
 }
