@@ -27,6 +27,9 @@ eps <- 1e-6
 top_n_genes <- 50
 use_ref_total <- "median"  # "median" or "mean"
 prop_pseudo <- 0.5
+area_threshold <- NULL  # e.g. 100
+
+area_col_candidates <- c("area_px2", "Area", "area", "area_um2", "myotube_area", "cell_area")
 
 if (!use_ref_total %in% c("median", "mean")) {
   stop("use_ref_total must be 'median' or 'mean'.")
@@ -49,6 +52,17 @@ if (nrow(cd0) != ncol(cnt0)) stop("colData rows and count columns do not match."
 
 cell_line_col <- pick_col(cd0, c("Cell Line", "Cell.Line", "cell_line", "CellLine"), "Cell Line")
 slide_col <- pick_col(cd0, c("Slide Name", "Slide.Name", "slide_name", "slide"), "Slide Name", required = FALSE)
+area_col <- pick_col(cd0, area_col_candidates, "Area", required = FALSE)
+morph_col <- pick_col(cd0, c("morphology_class"), "morphology_class")
+
+if (!is.null(area_threshold)) {
+  if (length(area_threshold) != 1 || !is.finite(area_threshold)) {
+    stop("area_threshold must be NULL or a single finite numeric value.")
+  }
+  if (is.na(area_col)) {
+    stop("area_threshold is set but no compatible area column was found.")
+  }
+}
 
 req_cols <- c("n_normal_nuclei", "n_abnormal_nuclei")
 miss <- setdiff(req_cols, colnames(cd0))
@@ -74,6 +88,30 @@ for (i in seq_along(cell_lines)) {
 
   cd <- cd0[idx_cl, , drop = FALSE]
   cnt_all <- cnt0[, idx_cl, drop = FALSE]
+
+  if (!is.null(area_threshold)) {
+    area_vals <- suppressWarnings(as.numeric(as.character(cd[[area_col]])))
+    keep_area <- !is.na(area_vals) & area_vals >= area_threshold
+    cd <- cd[keep_area, , drop = FALSE]
+    cnt_all <- cnt_all[, keep_area, drop = FALSE]
+    message(sprintf("[%d/%d] %s: %d myotubes after area filter (%s >= %.3f)",
+                    i, n_cell_lines, cl, ncol(cnt_all), area_col, area_threshold))
+    if (ncol(cnt_all) == 0) {
+      message(cl, ": no myotubes pass area_threshold.")
+      next
+    }
+  }
+
+  morph <- suppressWarnings(as.integer(as.character(cd[[morph_col]])))
+  keep_class <- morph %in% c(1L, 2L)  # class 1 (normal-only) vs class 2 (abnormal-only)
+  cd <- cd[keep_class, , drop = FALSE]
+  cnt_all <- cnt_all[, keep_class, drop = FALSE]
+  message(sprintf("[%d/%d] %s: %d myotubes after morphology_class filter (1/2)",
+                  i, n_cell_lines, cl, ncol(cnt_all)))
+  if (ncol(cnt_all) == 0) {
+    message(cl, ": no myotubes in morphology_class {1,2}.")
+    next
+  }
 
   # Covariates (raw)
   n_abn <- suppressWarnings(as.numeric(as.character(cd$n_abnormal_nuclei)))
@@ -272,6 +310,7 @@ saveRDS(list(
   top_n_genes = top_n_genes,
   use_ref_total = use_ref_total,
   prop_pseudo = prop_pseudo,
+  area_threshold = area_threshold,
   input_path = INPUT_PATH
 ), out_rds, compress = FALSE)
 
@@ -284,6 +323,7 @@ save(trend_results_by_cell_line,
      top_n_genes,
      use_ref_total,
      prop_pseudo,
+     area_threshold,
      INPUT_PATH,
      file = out_rdata)
 

@@ -9,8 +9,8 @@ suppressPackageStartupMessages({
 })
 
 # ---------------- USER INPUTS ----------------
-INPUT_PATH <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/r_dataset/processed_myotube_filtered.rds"
-OUTPUT_DIR <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/r_dataset/deg"
+INPUT_PATH <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/cosmx_slides_combined/r_dataset/rds/processed_myotube_filtered.rds"
+OUTPUT_DIR <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/cosmx_slides_combined/r_dataset/deg"
 dir.create(OUTPUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
 # ---------------- LOAD INPUT ----------------
@@ -25,15 +25,21 @@ min_expr_cells <- 100
 alpha_padj <- 0.05
 lfc_thr <- 0.25
 eps <- 1e-6
+area_threshold <- NULL  # e.g. 100
+
+area_col_candidates <- c("area_px2", "Area", "area", "area_um2", "myotube_area", "cell_area")
 
 # Saved so plotting notebooks can reuse expected defaults
 y_max_clip <- 30
 n_labels <- 15
 
-pick_col <- function(df, candidates, label) {
+pick_col <- function(df, candidates, label, required = TRUE) {
   hit <- candidates[candidates %in% colnames(df)][1]
   if (is.na(hit)) {
-    stop("Missing required column: ", label, ". Available: ", paste(colnames(df), collapse = ", "))
+    if (required) {
+      stop("Missing required column: ", label, ". Available: ", paste(colnames(df), collapse = ", "))
+    }
+    return(NA_character_)
   }
   hit
 }
@@ -54,6 +60,16 @@ if (!"morphology_class" %in% colnames(cd0)) {
 }
 
 cell_line_col <- pick_col(cd0, c("Cell Line", "Cell.Line", "cell_line", "CellLine"), "Cell Line")
+area_col <- pick_col(cd0, area_col_candidates, "Area", required = FALSE)
+
+if (!is.null(area_threshold)) {
+  if (length(area_threshold) != 1 || !is.finite(area_threshold)) {
+    stop("area_threshold must be NULL or a single finite numeric value.")
+  }
+  if (is.na(area_col)) {
+    stop("area_threshold is set but no compatible area column was found.")
+  }
+}
 
 results_by_cell_line <- list()
 sig_genes_by_cell_line <- list()
@@ -76,17 +92,31 @@ for (i in seq_along(cell_lines)) {
   message(sprintf("[%d/%d] %s: %d myotubes before filtering", i, n_cell_lines, cl, ncol(a)))
   if (ncol(a) == 0) next
 
+  if (!is.null(area_threshold)) {
+    area_vals <- suppressWarnings(as.numeric(as.character(colData(a)[[area_col]])))
+    keep_area <- !is.na(area_vals) & area_vals >= area_threshold
+    a <- a[, keep_area]
+    message(sprintf("[%d/%d] %s: %d myotubes after area filter (%s >= %.3f)",
+                    i, n_cell_lines, cl, ncol(a), area_col, area_threshold))
+    if (ncol(a) == 0) {
+      message(cl, ": no myotubes pass area_threshold.")
+      next
+    }
+  }
+
   morph <- suppressWarnings(as.integer(as.character(colData(a)$morphology_class)))
-  keep_grp <- morph %in% c(1L, 2L)  # only-normal vs only-abnormal
+  keep_grp <- morph %in% c(1L, 2L)  # class 1 (normal-only) vs class 2 (abnormal-only)
   a <- a[, keep_grp]
   morph <- morph[keep_grp]
-  message(sprintf("[%d/%d] %s: %d myotubes after normal/abnormal filter", i, n_cell_lines, cl, ncol(a)))
+  message(sprintf("[%d/%d] %s: %d myotubes after morphology_class filter (1/2)",
+                  i, n_cell_lines, cl, ncol(a)))
   if (ncol(a) == 0) {
-    message(cl, ": no only-normal/only-abnormal myotubes.")
+    message(cl, ": no myotubes in morphology_class {1,2}.")
     next
   }
 
-  group <- as.integer(morph == 2L) # 1 = abnormal-only, 0 = normal-only
+  group <- as.integer(morph == 2L) # 1 = class 2 (abnormal-only), 0 = class 1 (normal-only)
+
   mask_abn <- group == 1
   mask_norm <- group == 0
   if (sum(mask_abn) == 0 || sum(mask_norm) == 0) {
@@ -166,8 +196,8 @@ for (i in seq_along(cell_lines)) {
   )
 
   sig <- (df$pvals_adj < alpha_padj) & (abs(df$log2fc_xenium_eps) >= lfc_thr)
-  sig_up <- sig & (df$log2fc_xenium_eps >= lfc_thr)   # up in abnormal-only
-  sig_dn <- sig & (df$log2fc_xenium_eps <= -lfc_thr)  # up in normal-only
+  sig_up <- sig & (df$log2fc_xenium_eps >= lfc_thr)   # up in abnormal group
+  sig_dn <- sig & (df$log2fc_xenium_eps <= -lfc_thr)  # up in normal group
 
   message(sprintf("[%d/%d] %s: Up in Abnormal=%d, Up in Normal=%d, Total Sig=%d (%.1fs)",
                   i, n_cell_lines, cl, sum(sig_up), sum(sig_dn), sum(sig),
@@ -196,6 +226,7 @@ saveRDS(list(
   alpha_padj = alpha_padj,
   lfc_thr = lfc_thr,
   eps = eps,
+  area_threshold = area_threshold,
   y_max_clip = y_max_clip,
   n_labels = n_labels
 ), out_rds, compress = FALSE)
@@ -208,6 +239,7 @@ save(results_by_cell_line,
      alpha_padj,
      lfc_thr,
      eps,
+     area_threshold,
      y_max_clip,
      n_labels,
      file = out_rdata)

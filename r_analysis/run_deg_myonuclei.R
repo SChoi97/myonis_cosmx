@@ -9,8 +9,8 @@ suppressPackageStartupMessages({
 })
 
 # ---------------- USER INPUTS ----------------
-INPUT_PATH <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/r_dataset/processed_myonuclei.rds"
-OUTPUT_DIR <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/r_dataset/deg"
+INPUT_PATH <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/cosmx_slides_combined/r_dataset/rds/processed_myonuclei.rds"
+OUTPUT_DIR <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/cosmx_slides_combined/r_dataset/deg"
 dir.create(OUTPUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
 # ---------------- LOAD INPUT ----------------
@@ -22,22 +22,55 @@ min_expr_cells <- 100
 alpha_padj <- 0.05
 lfc_thr <- 0.25
 eps <- 1e-6
+area_threshold <- NULL  # e.g. 100
+sigmoid_logits_filter <- c(0.2, 0.8)  # e.g. c(0.2, 0.8)
+
+classification_col_candidates <- c("Predicted Class", "Predicted.Class", "predicted_class", "Classification", "classification")
+area_col_candidates <- c("area_px2", "Area", "area", "area_um2", "nucleus_area", "cell_area")
+sigmoid_col_candidates <- c("Sigmoid_Logits", "Sigmoid Logits", "sigmoid_logits", "sigmoid.logits")
 
 # Saved so plotting notebooks can reuse expected defaults
 y_max_clip <- 30
 n_labels <- 15
 
-pick_col <- function(df, candidates, label) {
+pick_col <- function(df, candidates, label, required = TRUE) {
   hit <- candidates[candidates %in% colnames(df)][1]
   if (is.na(hit)) {
-    stop("Missing required column: ", label, ". Available: ", paste(colnames(df), collapse = ", "))
+    if (required) {
+      stop("Missing required column: ", label, ". Available: ", paste(colnames(df), collapse = ", "))
+    }
+    return(NA_character_)
   }
   hit
 }
 
 cd0 <- as.data.frame(colData(adata))
 cell_line_col <- pick_col(cd0, c("Cell Line", "Cell.Line", "cell_line", "CellLine"), "Cell Line")
-sev_col <- pick_col(cd0, c("Severity", "severity", "Severity.x", "Severity.y"), "Severity")
+class_col <- pick_col(cd0, classification_col_candidates, "Predicted Class", required = FALSE)
+area_col <- pick_col(cd0, area_col_candidates, "Area", required = FALSE)
+sigmoid_col <- pick_col(cd0, sigmoid_col_candidates, "Sigmoid Logits", required = !is.null(sigmoid_logits_filter))
+
+if (is.na(class_col)) {
+  stop("Missing required column: Predicted Class (or compatible alias).")
+}
+if (!is.null(area_threshold)) {
+  if (length(area_threshold) != 1 || !is.finite(area_threshold)) {
+    stop("area_threshold must be NULL or a single finite numeric value.")
+  }
+  if (is.na(area_col)) {
+    stop("area_threshold is set but no compatible area column was found.")
+  }
+}
+
+sigmoid_low <- NA_real_
+sigmoid_high <- NA_real_
+if (!is.null(sigmoid_logits_filter)) {
+  if (length(sigmoid_logits_filter) != 2 || any(!is.finite(sigmoid_logits_filter))) {
+    stop("sigmoid_logits_filter must be a numeric vector of length 2, e.g. c(0.2, 0.8).")
+  }
+  sigmoid_low <- min(sigmoid_logits_filter)
+  sigmoid_high <- max(sigmoid_logits_filter)
+}
 
 results_by_cell_line <- list()
 sig_genes_by_cell_line <- list()
@@ -48,7 +81,7 @@ cell_lines <- sort(unique(na.omit(as.character(colData(adata)[[cell_line_col]]))
 n_cell_lines <- length(cell_lines)
 
 t0_all <- Sys.time()
-message(sprintf("NB-GLM DE (nuclei; Severity 0/1 vs 2) starting at %s; cell lines=%d",
+message(sprintf("NB-GLM DE (nuclei; Predicted Class 0 vs 1) starting at %s; cell lines=%d",
                 format(t0_all, "%Y-%m-%d %H:%M:%S"), n_cell_lines))
 
 for (i in seq_along(cell_lines)) {
@@ -60,26 +93,50 @@ for (i in seq_along(cell_lines)) {
   message(sprintf("[%d/%d] %s: %d nuclei before filtering", i, n_cell_lines, cl, ncol(a)))
   if (ncol(a) == 0) next
 
-  sev_raw <- trimws(as.character(colData(a)[[sev_col]]))
-  sev <- suppressWarnings(as.integer(sev_raw))
-
-  # Fallback for non-numeric labels if present
-  if (all(is.na(sev))) {
-    key <- tolower(sev_raw)
-    sev <- ifelse(key %in% c("normal"), 0L,
-                  ifelse(key %in% c("abnormal"), 2L, NA_integer_))
+  if (!is.null(area_threshold)) {
+    area_vals <- suppressWarnings(as.numeric(as.character(colData(a)[[area_col]])))
+    keep_area <- !is.na(area_vals) & area_vals >= area_threshold
+    a <- a[, keep_area]
+    message(sprintf("[%d/%d] %s: %d nuclei after area filter (%s >= %.3f)",
+                    i, n_cell_lines, cl, ncol(a), area_col, area_threshold))
+    if (ncol(a) == 0) {
+      message(cl, ": no nuclei pass area_threshold.")
+      next
+    }
   }
 
-  keep_grp <- sev %in% c(0L, 1L, 2L)
+  if (!is.null(sigmoid_logits_filter)) {
+    logits_vals <- suppressWarnings(as.numeric(as.character(colData(a)[[sigmoid_col]])))
+    keep_logits <- !is.na(logits_vals) & (logits_vals < sigmoid_low | logits_vals > sigmoid_high)
+    a <- a[, keep_logits]
+    message(sprintf("[%d/%d] %s: %d nuclei after sigmoid filter (%s outside [%.3f, %.3f])",
+                    i, n_cell_lines, cl, ncol(a), sigmoid_col, sigmoid_low, sigmoid_high))
+    if (ncol(a) == 0) {
+      message(cl, ": no nuclei pass sigmoid_logits_filter.")
+      next
+    }
+  }
+
+  class_raw <- trimws(as.character(colData(a)[[class_col]]))
+  class_norm <- tolower(class_raw)
+  class_pred <- suppressWarnings(as.integer(class_raw))
+
+  idx_na_class <- is.na(class_pred)
+  if (any(idx_na_class)) {
+    class_pred[idx_na_class] <- ifelse(class_norm[idx_na_class] %in% c("normal", "0"), 0L,
+                                       ifelse(class_norm[idx_na_class] %in% c("abnormal", "1"), 1L, NA_integer_))
+  }
+
+  keep_grp <- class_pred %in% c(0L, 1L)
   a <- a[, keep_grp]
-  sev <- sev[keep_grp]
-  message(sprintf("[%d/%d] %s: %d nuclei after Severity filter (0/1/2)", i, n_cell_lines, cl, ncol(a)))
+  class_pred <- class_pred[keep_grp]
+  message(sprintf("[%d/%d] %s: %d nuclei after Predicted Class filter (0/1)", i, n_cell_lines, cl, ncol(a)))
   if (ncol(a) == 0) {
-    message(cl, ": no nuclei with Severity in {0,1,2}.")
+    message(cl, ": no nuclei with Predicted Class in {0,1}.")
     next
   }
 
-  group <- as.integer(sev == 2L)  # 1 = abnormal (Severity 2), 0 = normal (Severity 0/1)
+  group <- as.integer(class_pred == 1L)  # 1 = abnormal (Predicted Class 1), 0 = normal (Predicted Class 0)
   mask_abn <- group == 1
   mask_norm <- group == 0
   if (sum(mask_abn) == 0 || sum(mask_norm) == 0) {
@@ -159,8 +216,8 @@ for (i in seq_along(cell_lines)) {
   )
 
   sig <- (df$pvals_adj < alpha_padj) & (abs(df$log2fc_xenium_eps) >= lfc_thr)
-  sig_up <- sig & (df$log2fc_xenium_eps >= lfc_thr)   # up in abnormal (Severity 2)
-  sig_dn <- sig & (df$log2fc_xenium_eps <= -lfc_thr)  # up in normal (Severity 0/1)
+  sig_up <- sig & (df$log2fc_xenium_eps >= lfc_thr)   # up in abnormal (Predicted Class 1)
+  sig_dn <- sig & (df$log2fc_xenium_eps <= -lfc_thr)  # up in normal (Predicted Class 0)
 
   message(sprintf("[%d/%d] %s: Up in Abnormal=%d, Up in Normal=%d, Total Sig=%d (%.1fs)",
                   i, n_cell_lines, cl, sum(sig_up), sum(sig_dn), sum(sig),
@@ -172,7 +229,7 @@ for (i in seq_along(cell_lines)) {
   sig_genes_down_abnormal[[cl]] <- df$names[sig_dn]
 }
 
-message(sprintf("NB-GLM DE (nuclei; Severity 0/1 vs 2) finished in %.1f minutes",
+message(sprintf("NB-GLM DE (nuclei; Predicted Class 0 vs 1) finished in %.1f minutes",
                 as.numeric(difftime(Sys.time(), t0_all, units = "mins"))))
 
 # ---------------- SAVE OUTPUTS ----------------
@@ -189,6 +246,8 @@ saveRDS(list(
   alpha_padj = alpha_padj,
   lfc_thr = lfc_thr,
   eps = eps,
+  area_threshold = area_threshold,
+  sigmoid_logits_filter = sigmoid_logits_filter,
   y_max_clip = y_max_clip,
   n_labels = n_labels
 ), out_rds, compress = FALSE)
@@ -201,6 +260,8 @@ save(results_by_cell_line,
      alpha_padj,
      lfc_thr,
      eps,
+     area_threshold,
+     sigmoid_logits_filter,
      y_max_clip,
      n_labels,
      file = out_rdata)

@@ -33,3 +33,4 @@ unet.sh
 *.bmp
 *.tiff
 *.ico
+*.out
