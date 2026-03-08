@@ -2,15 +2,35 @@
 # Helper functions
 #--- 
 import re
+from functools import lru_cache
+from pathlib import Path
+
 import cv2
 import numpy as np
 import pandas as pd
+
 patch_layout = {
                 0: (0, 0),       1: (1024, 0),       2: (2048, 0),       3: (3072, 0),
                 4: (0, 1024),    5: (1024, 1024),    6: (2048, 1024),    7: (3072, 1024),
                 8: (0, 2048),    9: (1024, 2048),   10: (2048, 2048),   11: (3072, 2048),
                 12: (0, 3072),   13: (1024, 3072),   14: (2048, 3072),   15: (3072, 3072)
                 }
+
+CLASSIFICATION_COLUMN_CANDIDATES = ("Predicted Class",)
+FIELD_COLUMN_CANDIDATES = ("field",)
+PATCH_COLUMN_CANDIDATES = ("patch_idx",)
+CELL_LINE_COLUMN_CANDIDATES = ("Cell Line",)
+LOCAL_ID_COLUMN_CANDIDATES = ("local_id",)
+IMAGE_NAME_COLUMN_CANDIDATES = ("Image Name",)
+IMAGE_NAME_PARSE_PATTERN = (
+    r"^field_(?P<field>[^_]+)_patch_(?P<patch_idx>\d+)_cellline_"
+    r"(?P<cell_line>.+?)_localid_(?P<local_id>\d+)$"
+)
+DEFAULT_CLASS_COLOR_MAP = {
+    -1: "#4E4E4E",
+    0: "#378EFF",
+    1: "#E7355B",
+}
 
 def numericalSort(value):
     """
@@ -65,6 +85,186 @@ def create_fiji_lut(color='cyan', n_colors=256):
     }
     
     return LinearSegmentedColormap(f'fiji_{color.lower()}', cdict, N=n_colors)
+
+
+def _pick_first_present_column(df: pd.DataFrame, candidates, label: str, required: bool = True):
+    for candidate in candidates:
+        if candidate in df.columns:
+            return candidate
+    if required:
+        raise ValueError(
+            f"Could not find {label}. Expected one of: {list(candidates)}. "
+            f"Available columns: {df.columns.tolist()}"
+        )
+    return None
+
+
+def _normalize_join_key(series: pd.Series) -> pd.Series:
+    return series.astype(str).str.strip().str.upper()
+
+
+def _normalize_class_label(value):
+    if pd.isna(value):
+        return -1
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return -1
+        try:
+            numeric = float(stripped)
+        except ValueError:
+            return -1
+        if np.isfinite(numeric) and numeric.is_integer():
+            return int(numeric)
+        return -1
+
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+
+    if isinstance(value, (float, np.floating)):
+        if not np.isfinite(value):
+            return -1
+        if float(value).is_integer():
+            return int(value)
+        return -1
+
+    return -1
+
+
+def _make_classification_color_map(class_labels: list) -> dict:
+    color_map = dict(DEFAULT_CLASS_COLOR_MAP)
+    for label in class_labels:
+        normalized = _normalize_class_label(label)
+        if normalized not in color_map:
+            color_map[normalized] = DEFAULT_CLASS_COLOR_MAP[-1]
+    return color_map
+
+
+@lru_cache(maxsize=4)
+def _load_classification_metadata(metadata_path_str: str) -> pd.DataFrame:
+    metadata_path = Path(metadata_path_str)
+    metadata_df = pd.read_csv(metadata_path)
+
+    classification_col = _pick_first_present_column(
+        metadata_df,
+        CLASSIFICATION_COLUMN_CANDIDATES,
+        "classification column",
+    )
+
+    field_col = _pick_first_present_column(
+        metadata_df,
+        FIELD_COLUMN_CANDIDATES,
+        "field column",
+        required=False,
+    )
+    patch_col = _pick_first_present_column(
+        metadata_df,
+        PATCH_COLUMN_CANDIDATES,
+        "patch column",
+        required=False,
+    )
+    cell_line_col = _pick_first_present_column(
+        metadata_df,
+        CELL_LINE_COLUMN_CANDIDATES,
+        "cell line column",
+        required=False,
+    )
+    local_id_col = _pick_first_present_column(
+        metadata_df,
+        LOCAL_ID_COLUMN_CANDIDATES,
+        "local_id column",
+        required=False,
+    )
+
+    if None in (field_col, patch_col, cell_line_col, local_id_col):
+        image_name_col = _pick_first_present_column(
+            metadata_df,
+            IMAGE_NAME_COLUMN_CANDIDATES,
+            "image name column",
+        )
+        parsed = (
+            metadata_df[image_name_col]
+            .astype(str)
+            .str.rsplit("/", n=1).str[-1]
+            .str.replace(r"\.[^.]+$", "", regex=True)
+            .str.extract(IMAGE_NAME_PARSE_PATTERN)
+        )
+        bad = parsed.isna().any(axis=1)
+        if bad.any():
+            examples = metadata_df.loc[bad, image_name_col].head(5).tolist()
+            raise ValueError(
+                f"{metadata_path}: {int(bad.sum())} metadata rows failed Image Name parsing. "
+                f"Examples: {examples}"
+            )
+        field_series = parsed["field"]
+        patch_series = parsed["patch_idx"]
+        cell_line_series = parsed["cell_line"]
+        local_id_series = parsed["local_id"]
+    else:
+        field_series = metadata_df[field_col]
+        patch_series = metadata_df[patch_col]
+        cell_line_series = metadata_df[cell_line_col]
+        local_id_series = metadata_df[local_id_col]
+
+    out = pd.DataFrame(
+        {
+            "field_key": _normalize_join_key(field_series),
+            "patch_idx_key": pd.to_numeric(patch_series, errors="coerce"),
+            "cell_line_key": _normalize_join_key(cell_line_series),
+            "local_id_key": pd.to_numeric(local_id_series, errors="coerce"),
+            "classification_label": metadata_df[classification_col].map(_normalize_class_label),
+        }
+    )
+    out = out.dropna(subset=["patch_idx_key", "local_id_key"])
+    out["patch_idx_key"] = out["patch_idx_key"].astype(np.int32)
+    out["local_id_key"] = out["local_id_key"].astype(np.int32)
+    out = out.drop_duplicates(
+        subset=["field_key", "patch_idx_key", "cell_line_key", "local_id_key"],
+        keep="first",
+    )
+    return out
+
+
+def _align_classification_metadata(nuclei_obs: pd.DataFrame, metadata_path: Path):
+    metadata_df = _load_classification_metadata(str(metadata_path.resolve()))
+
+    field_col = _pick_first_present_column(nuclei_obs, FIELD_COLUMN_CANDIDATES, "nuclei field column")
+    patch_col = _pick_first_present_column(nuclei_obs, PATCH_COLUMN_CANDIDATES, "nuclei patch column")
+    cell_line_col = _pick_first_present_column(
+        nuclei_obs,
+        CELL_LINE_COLUMN_CANDIDATES,
+        "nuclei cell line column",
+    )
+    local_id_col = _pick_first_present_column(nuclei_obs, LOCAL_ID_COLUMN_CANDIDATES, "nuclei local_id column")
+
+    obs_keys = pd.DataFrame(
+        {
+            "field_key": _normalize_join_key(nuclei_obs[field_col]),
+            "patch_idx_key": pd.to_numeric(nuclei_obs[patch_col], errors="coerce"),
+            "cell_line_key": _normalize_join_key(nuclei_obs[cell_line_col]),
+            "local_id_key": pd.to_numeric(nuclei_obs[local_id_col], errors="coerce"),
+            "_row_order": np.arange(len(nuclei_obs), dtype=np.int32),
+        },
+        index=nuclei_obs.index,
+    )
+
+    obs_fields = obs_keys["field_key"].dropna().unique().tolist()
+    if obs_fields:
+        metadata_df = metadata_df[metadata_df["field_key"].isin(obs_fields)].copy()
+
+    merged = obs_keys.merge(
+        metadata_df,
+        on=["field_key", "patch_idx_key", "cell_line_key", "local_id_key"],
+        how="left",
+        sort=False,
+    ).sort_values("_row_order")
+
+    classification_labels = [
+        _normalize_class_label(value) for value in merged["classification_label"].tolist()
+    ]
+    matched = sum(label != -1 for label in classification_labels)
+    return classification_labels, matched
 
 def unpack_object_contours(obj_contours):
     """
@@ -558,6 +758,7 @@ def visualize_voronoi(contours: list,
                        myotube_contours: list = None,
                        myotube_linewidth: int = 2,
                        myotube_alpha: float = 0.25,
+                       nuclei_line_color = None,
                        myotube_line_color: tuple = (0, 0, 0),
                        myotube_fill_color: tuple = (200, 200, 200),
                        background_color: str = 'white',
@@ -580,6 +781,8 @@ def visualize_voronoi(contours: list,
                         myotubes are filled and outlined using the parameters below.
     - myotube_linewidth: Width of the myotube contour outline (default: 2)
     - myotube_alpha: Transparency for myotube fill overlay (default: 0.25)
+    - nuclei_line_color: Line color for nuclei contours as hex or (R, G, B). If None,
+                         uses white on black backgrounds and black on white backgrounds.
     - myotube_line_color: Line color for myotube contours as hex or (R, G, B) (default: black)
     - myotube_fill_color: Fill color for myotube regions as hex or (R, G, B) (default: light gray)
     - background_color: Background color, either 'white' or 'black' (default: 'white')
@@ -686,14 +889,17 @@ def visualize_voronoi(contours: list,
         # Blend myotube fill onto the image
         voronoi_image = cv2.addWeighted(myotube_layer, myotube_alpha, voronoi_image, 1 - myotube_alpha, 0)
     
-    # Draw outlines for nuclei on top (white for black background, black for white background)
-    nuclei_line_color = (255, 255, 255) if background_color == 'black' else (0, 0, 0)
+    # Draw outlines for nuclei on top. Default remains white on black / black on white.
+    if nuclei_line_color is None:
+        nuclei_line_rgb = (255, 255, 255) if background_color == 'black' else (0, 0, 0)
+    else:
+        nuclei_line_rgb = _to_rgb(nuclei_line_color)
     
     # Create outline layer for nuclei to support edge suppression
     nuclei_outline_layer = np.zeros((height, width, 3), dtype=np.uint8)
     for contour in contours:
         contour_int = np.array(contour, dtype=np.int32)
-        cv2.drawContours(nuclei_outline_layer, [contour_int], -1, nuclei_line_color, thickness=linewidth)
+        cv2.drawContours(nuclei_outline_layer, [contour_int], -1, nuclei_line_rgb, thickness=linewidth)
     
     # Suppress edge-adjacent outline pixels if requested
     if not image_edge_outline:
@@ -708,7 +914,7 @@ def visualize_voronoi(contours: list,
     
     # Composite nuclei outlines onto image
     nuclei_mask = cv2.cvtColor(nuclei_outline_layer, cv2.COLOR_BGR2GRAY)
-    voronoi_image[nuclei_mask > 0] = nuclei_line_color
+    voronoi_image[nuclei_mask > 0] = nuclei_line_rgb
 
     # Draw myotube outlines on top (if provided)
     if myotube_contours is not None and len(myotube_contours) > 0:
@@ -734,6 +940,34 @@ def visualize_voronoi(contours: list,
         voronoi_image[mt_mask > 0] = mt_line_rgb
     
     return voronoi_image
+
+
+def _build_classification_overlay(
+    image_shape,
+    nuclei_patch_contours,
+    myotube_patch_contours,
+    class_labels,
+    class_color_map,
+    dapi_lw,
+    myhc_lw,
+):
+    return visualize_voronoi(
+        contours=nuclei_patch_contours,
+        image_shape=image_shape,
+        linewidth=3,
+        alpha=1.0,
+        morphology_class_list=class_labels,
+        morphology_class_colors=class_color_map,
+        myotube_contours=myotube_patch_contours,
+        myotube_linewidth=6,
+        myotube_alpha=0.1,
+        nuclei_line_color="#BAC6FF",
+        myotube_line_color="#BAC6FF",
+        myotube_fill_color=(255, 255, 255),
+        background_color='black',
+        image_edge_outline=False,
+        image_edge_border_width=5,
+    )
 
 default_palette = [(255, 123, 156), (96, 113, 150), (255, 199, 89), (150, 230, 179),
                        (217, 61, 72), (242, 146, 72), (255, 221, 117), (228, 253, 225),
