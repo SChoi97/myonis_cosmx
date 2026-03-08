@@ -55,15 +55,26 @@ n_labels <- 15
 #   --sigmoid_logits_filter 0.2 0.8
 overrides <- parse_cli_overrides(commandArgs(trailingOnly = TRUE))
 sigmoid_filter_set_null <- FALSE
+area_threshold_raw <- NULL
 if ("sigmoid_logits_filter" %in% names(overrides)) {
   raw_sigmoid <- tolower(trimws(overrides[["sigmoid_logits_filter"]]))
   if (raw_sigmoid %in% c("null", "none")) {
     sigmoid_filter_set_null <- TRUE
   }
 }
+if ("area_threshold" %in% names(overrides)) {
+  area_threshold_raw <- trimws(overrides[["area_threshold"]])
+}
 apply_cli_overrides(overrides)
 if (sigmoid_filter_set_null) {
   sigmoid_logits_filter <- NULL
+}
+if (!is.null(area_threshold_raw)) {
+  if (tolower(area_threshold_raw) %in% c("null", "none")) {
+    area_threshold <- NULL
+  } else {
+    area_threshold <- suppressWarnings(as.numeric(trimws(strsplit(area_threshold_raw, ",", fixed = TRUE)[[1]])))
+  }
 }
 
 dir.create(OUTPUT_DIR, recursive = TRUE, showWarnings = FALSE)
