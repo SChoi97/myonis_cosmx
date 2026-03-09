@@ -1,5 +1,9 @@
 # Analysis of the relationship between nuclear morphology and transcriptome using spatial transcriptomics
 
+<p align="center">
+  <img src="images/myonis_cosmx_logo.jpg" alt="Logo" width="500">
+</p>
+
 This repository contains code for processing of data from the Nanostring CosMx assay. \
 The repository is split into 2 main sections: `generate_h5ad` and `r_analysis`
 
