@@ -32,6 +32,7 @@ alpha_padj <- 0.05
 lfc_thr <- 0.25
 eps <- 1e-6
 area_threshold <- NULL  # e.g. 100
+slide_covariate <- FALSE
 
 area_col_candidates <- c("area_px2", "Area", "area", "area_um2", "myotube_area", "cell_area")
 
@@ -50,7 +51,8 @@ n_labels <- 15
 #   --OUTPUT_DIR /path/deg \
 #   --lfc_thr 0.25 \
 #   --eps 1e-6 \
-#   --area_threshold NULL
+#   --area_threshold NULL \
+#   --slide_covariate TRUE
 overrides <- parse_cli_overrides(commandArgs(trailingOnly = TRUE))
 area_threshold_set_null <- FALSE
 if ("area_threshold" %in% names(overrides)) {
@@ -100,6 +102,7 @@ if (!"morphology_class" %in% colnames(cd0)) {
 }
 
 cell_line_col <- pick_col(cd0, c("Cell Line", "Cell.Line", "cell_line", "CellLine"), "Cell Line")
+slide_col <- pick_col(cd0, c("Slide Name", "Slide.Name", "slide_name", "slide"), "Slide Name", required = FALSE)
 area_col <- pick_col(cd0, area_col_candidates, "Area", required = FALSE)
 
 if (!is.null(area_threshold)) {
@@ -194,7 +197,19 @@ for (i in seq_along(cell_lines)) {
   }
   size_factors[size_factors <= 0] <- min(sf_pos) * 1e-3
 
-  design <- model.matrix(~ group)
+  if (isTRUE(slide_covariate) && !is.na(slide_col)) {
+    slide_chr <- as.character(colData(a)[[slide_col]])
+    slide_chr[is.na(slide_chr) | trimws(slide_chr) == ""] <- "UNKNOWN"
+    slide <- factor(slide_chr)
+    if (nlevels(slide) > 1) {
+      design <- model.matrix(~ group + slide)
+    } else {
+      design <- model.matrix(~ group)
+      message(cl, ": slide column has one level; fitting without slide term.")
+    }
+  } else {
+    design <- model.matrix(~ group)
+  }
   y <- DGEList(counts = cnt)
   y$samples$lib.size <- as.numeric(size_factors)
   y$samples$norm.factors <- rep(1, ncol(cnt))
@@ -207,7 +222,11 @@ for (i in seq_along(cell_lines)) {
 
   step_t0 <- Sys.time()
   fit <- glmFit(y, design)
-  lrt <- glmLRT(fit, coef = "group")
+  idx_group <- which(colnames(design) == "group")
+  if (length(idx_group) != 1) {
+    stop("Could not find group in design: ", paste(colnames(design), collapse = ", "))
+  }
+  lrt <- glmLRT(fit, coef = idx_group)
   message(sprintf("[%d/%d] %s: glmFit+glmLRT done (%.1fs)", i, n_cell_lines, cl,
                   as.numeric(difftime(Sys.time(), step_t0, units = "secs"))))
 
@@ -227,7 +246,7 @@ for (i in seq_along(cell_lines)) {
   df <- tibble(
     names = rownames(cnt),
     beta0 = fit$coefficients[, 1],
-    beta1 = fit$coefficients[, 2],
+    beta1 = fit$coefficients[, idx_group],
     log2fc_xenium_eps = log2fc_xenium_eps,
     mean_abn_sf_norm = mean_abn,
     mean_norm_sf_norm = mean_norm,
