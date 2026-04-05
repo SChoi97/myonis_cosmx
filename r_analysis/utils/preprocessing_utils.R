@@ -136,6 +136,58 @@ as_key <- function(x) trimws(as.character(x))
 
 normalize_label <- function(x) tolower(trimws(as.character(x)))
 
+canonicalize_binary_class <- function(
+  x,
+  normal_values,
+  abnormal_values,
+  unclassified_values = c("-1", ""),
+  label = "classification"
+) {
+  normal_norm <- unique(stats::na.omit(normalize_label(normal_values)))
+  abnormal_norm <- unique(stats::na.omit(normalize_label(abnormal_values)))
+  unclassified_norm <- unique(stats::na.omit(normalize_label(unclassified_values)))
+
+  overlap <- intersect(normal_norm, abnormal_norm)
+  if (length(overlap) > 0) {
+    stop(
+      "normal_values and abnormal_values overlap after normalization: ",
+      paste(overlap, collapse = ", ")
+    )
+  }
+
+  x_chr <- as.character(x)
+  x_norm <- normalize_label(x)
+
+  is_missing <- is.na(x_norm)
+  is_normal <- !is_missing & x_norm %in% normal_norm
+  is_abnormal <- !is_missing & x_norm %in% abnormal_norm
+  is_unclassified <- is_missing | x_norm %in% unclassified_norm
+
+  unexpected <- !(is_normal | is_abnormal | is_unclassified)
+  if (any(unexpected)) {
+    unexpected_tbl <- sort(table(x_chr[unexpected], useNA = "ifany"), decreasing = TRUE)
+    unexpected_vals <- names(unexpected_tbl)
+    unexpected_vals[is.na(unexpected_vals)] <- "<NA>"
+    unexpected_vals[unexpected_vals == ""] <- "<blank>"
+    unexpected_msg <- paste(
+      sprintf("%s (%d)", unexpected_vals, as.integer(unexpected_tbl)),
+      collapse = ", "
+    )
+    stop(
+      "Unexpected ", label, " values. Allowed normal aliases: ",
+      paste(normal_values, collapse = ", "),
+      "; allowed abnormal aliases: ", paste(abnormal_values, collapse = ", "),
+      "; allowed unclassified values: -1, blank, NA. Found: ",
+      unexpected_msg
+    )
+  }
+
+  out <- rep("unclassified", length(x_norm))
+  out[is_normal] <- "0"
+  out[is_abnormal] <- "1"
+  out
+}
+
 to_myonucleus_flag <- function(x) {
   if (is.logical(x)) return(replace(x, is.na(x), FALSE))
   if (is.numeric(x) || is.integer(x)) return(!is.na(x) & x == 1)
