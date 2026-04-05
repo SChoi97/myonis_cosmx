@@ -270,6 +270,13 @@ if (!(sigmoid_logits_column %in% names(metadata_df))) {
   )
 }
 
+canonicalize_binary_class(
+  metadata_df[[classification_column]],
+  normal_values = normal_class_values,
+  abnormal_values = abnormal_class_values,
+  label = paste0("metadata column '", classification_column, "'")
+)
+
 cell_line_col_meta <- pick_col(metadata_df, metadata_cell_line_candidates, "Cell Line")
 
 metadata_summary <- metadata_df %>%
@@ -356,6 +363,12 @@ classification_assigned <- sum(!is.na(colData(filtered_nuclei)$Classification))
 classification_missing <- sum(is.na(colData(filtered_nuclei)$Classification))
 sigmoid_logits_assigned <- sum(!is.na(colData(filtered_nuclei)$Sigmoid_Logits))
 sigmoid_logits_missing <- sum(is.na(colData(filtered_nuclei)$Sigmoid_Logits))
+filtered_class_canonical <- canonicalize_binary_class(
+  colData(filtered_nuclei)$Classification,
+  normal_values = normal_class_values,
+  abnormal_values = abnormal_class_values,
+  label = "filtered_nuclei Classification"
+)
 
 # ---------------- SLIDE + CLASS SUMMARY STATS ----------------
 cd_stats <- as.data.frame(colData(filtered_nuclei))
@@ -369,7 +382,7 @@ cell_unique_stats <- Matrix::colSums(cnt_stats > 0)
 cd_stats <- cd_stats %>%
   mutate(
     slide_key = as.character(.data[[slide_col_stats]]),
-    class_key = if (!is.na(class_col_stats)) as.character(.data[[class_col_stats]]) else NA_character_,
+    class_key = if (!is.na(class_col_stats)) filtered_class_canonical else rep(NA_character_, n()),
     .cell_counts = cell_counts_stats,
     .cell_unique = cell_unique_stats
   )
@@ -383,9 +396,8 @@ slide_stats_df <- cd_stats %>%
   )
 
 if (!all(is.na(cd_stats$class_key))) {
-  class_levels <- sort(unique(na.omit(cd_stats$class_key)))
+  class_levels <- intersect(c("0", "1"), sort(unique(na.omit(cd_stats$class_key))))
   for (cls in class_levels) {
-    cls_safe <- safe_colname_fragment(cls)
     tmp <- cd_stats %>%
       filter(class_key == cls) %>%
       group_by(slide_key) %>%
@@ -397,8 +409,8 @@ if (!all(is.na(cd_stats$class_key))) {
     slide_stats_df <- slide_stats_df %>%
       left_join(tmp, by = "slide_key") %>%
       rename(
-        !!paste0("Class_", cls_safe, "_Avg_Count") := avg_count,
-        !!paste0("Class_", cls_safe, "_Avg_Unique") := avg_unique
+        !!paste0("Class_", cls, "_Avg_Count") := avg_count,
+        !!paste0("Class_", cls, "_Avg_Unique") := avg_unique
       )
   }
 }
@@ -433,9 +445,6 @@ field_t <- pick_col(cd_myotube, c("field", "Field", "field_key"), "field")
 patch_t <- pick_col(cd_myotube, c("patch_idx", "Patch", "patch", "patch.id", "patch_idx_key"), "patch_idx")
 tube_t <- pick_col(cd_myotube, myotube_id_col_candidates, "myotube_id/local_id")
 
-normal_values_norm <- normalize_label(normal_class_values)
-abnormal_values_norm <- normalize_label(abnormal_class_values)
-
 nuc_df <- cd_nuclei_for_tube %>%
   transmute(
     slide_key = toupper(as_key(.data[[slide_n]])),
@@ -445,10 +454,17 @@ nuc_df <- cd_nuclei_for_tube %>%
     class_raw = as.character(.data[[class_n]])
   )
 
-nuc_df$class_norm <- normalize_label(nuc_df$class_raw)
-nuc_df$class_group <- NA_character_
-nuc_df$class_group[nuc_df$class_norm %in% normal_values_norm] <- "Normal"
-nuc_df$class_group[nuc_df$class_norm %in% abnormal_values_norm] <- "Abnormal"
+nuc_df$class_canonical <- canonicalize_binary_class(
+  nuc_df$class_raw,
+  normal_values = normal_class_values,
+  abnormal_values = abnormal_class_values,
+  label = "myonuclei Classification"
+)
+nuc_df$class_group <- dplyr::case_when(
+  nuc_df$class_canonical == "0" ~ "Normal",
+  nuc_df$class_canonical == "1" ~ "Abnormal",
+  TRUE ~ NA_character_
+)
 nuc_df <- nuc_df %>% filter(!is.na(class_group))
 
 counts_by_tube <- nuc_df %>%
