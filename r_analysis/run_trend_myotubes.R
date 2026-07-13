@@ -24,15 +24,15 @@ script_dir <- local({
 source(file.path(script_dir, "utils", "preprocessing_utils.R"))
 
 # ---------------- USER INPUTS ----------------
-INPUT_PATH <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/r_dataset/processed_myotube_filtered.rds"
-OUTPUT_DIR <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/r_dataset/trend_regression_myotubes"
+INPUT_PATH <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/cosmx_slides_combined/r_dataset/rds/random_assignment_rs1/resnet18_t5r5_simclr_severity_classes_e100_bf16_v2_finetuned/processed_myotube_filtered.rds"
+OUTPUT_DIR <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/cosmx_slides_combined/r_dataset/trend_regression_myotubes/random_assignment_rs1/resnet18_t5r5_simclr_severity_classes_e100_bf16_v2_finetuned/prop_pseudo_0.0"
 
 # ---------------- CONFIG ----------------
 min_expr_tubes <- 50
 eps <- 1e-6
 top_n_genes <- 50
 use_ref_total <- "median"  # "median" or "mean"
-prop_pseudo <- 0.5
+prop_pseudo <- 0.0
 area_threshold <- NULL  # e.g. 100
 
 area_col_candidates <- c("area_px2", "Area", "area", "area_um2", "myotube_area", "cell_area")
@@ -50,7 +50,11 @@ if (!use_ref_total %in% c("median", "mean")) {
 # Rscript run_trend_myotubes.R \
 #   --INPUT_PATH /path/processed_myotube_filtered.rds \
 #   --OUTPUT_DIR /path/trend_regression_myotubes \
+#   --min_expr_tubes 50 \
+#   --eps 1e-6 \
 #   --top_n_genes 50 \
+#   --use_ref_total median \
+#   --prop_pseudo 0.0 \
 #   --area_threshold NULL
 overrides <- parse_cli_overrides(commandArgs(trailingOnly = TRUE))
 area_threshold_set_null <- FALSE

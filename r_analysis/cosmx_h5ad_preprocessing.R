@@ -42,6 +42,7 @@ metadata_cell_line_candidates <- c("Cell Line", "Cell.Line", "cell_line", "CellL
 # Output
 output_dir <- "/nemo/lab/tedescos/home/users/chois1/nanostring/cosmx/cosmx_6k_2025/processed_files/cosmx_slides_combined/r_dataset/rds"
 output_myonuclei_filename <- "processed_myonuclei.rds"
+output_myonuclei_all_nuclei_filename <- "processed_myonuclei_all_nuclei.rds"
 output_myotube_filename <- "processed_myotube_filtered.rds"
 
 # Cache behavior
@@ -68,6 +69,7 @@ morphology_feature_indices <- c(1L, 2L, 4L)
 is_myonucleus_column <- "is_myonucleus"
 myotube_id_column <- "myotube_id"
 myotube_id_unassigned_value <- -1L
+filter_is_myonucleus <- TRUE
 
 # Class mapping (requested earlier: 0 = Normal, 1 = Abnormal)
 normal_class_values <- c("0", "normal")
@@ -90,7 +92,8 @@ myotube_id_col_candidates <- c("myotube_id", "local_id", "local.id")
 #   --metadata_csv_path /path/metadata_df.csv \
 #   --output_dir /path/output \
 #   --classification_column 'Predicted Class' \
-#   --sigmoid_logits_column 'Sigmoid Logits'
+#   --sigmoid_logits_column 'Sigmoid Logits' \
+#   --filter_is_myonucleus TRUE
 #
 # Or shorthand (mirrors cosmx_h5ad_to_rready.py outputs):
 # Rscript cosmx_h5ad_preprocessing.R \
@@ -144,6 +147,7 @@ cat("filtered_nuclei_h5ad:   ", filtered_nuclei_h5ad, "\n", sep = "")
 cat("metadata_csv_path:      ", metadata_csv_path, "\n", sep = "")
 cat("classification_column:  ", classification_column, "\n", sep = "")
 cat("sigmoid_logits_column:  ", sigmoid_logits_column, "\n", sep = "")
+cat("filter_is_myonucleus:   ", filter_is_myonucleus, "\n", sep = "")
 cat("output_dir:             ", output_dir, "\n", sep = "")
 cat("force_rebuild_cache:    ", force_rebuild_cache, "\n", sep = "")
 cat("min_cell_total_nuclei:  ", min_cell_total_nuclei, "\n", sep = "")
@@ -429,9 +433,10 @@ if (!(is_myonucleus_column %in% colnames(colData(filtered_nuclei)))) {
 
 is_myonucleus_flag <- to_myonucleus_flag(colData(filtered_nuclei)[[is_myonucleus_column]])
 myonuclei <- filtered_nuclei[, is_myonucleus_flag]
+nuclei_for_tube <- if (isTRUE(filter_is_myonucleus)) myonuclei else filtered_nuclei
 
 # ---------------- MYOTUBE-LEVEL NUCLEUS CLASS COUNTS ----------------
-cd_nuclei_for_tube <- as.data.frame(colData(myonuclei))
+cd_nuclei_for_tube <- as.data.frame(colData(nuclei_for_tube))
 cd_myotube <- as.data.frame(colData(myotube_combined))
 
 slide_n <- pick_col(cd_nuclei_for_tube, c("Slide Name", "Slide.Name", "slide_name", "slide"), "Slide Name")
@@ -458,7 +463,7 @@ nuc_df$class_canonical <- canonicalize_binary_class(
   nuc_df$class_raw,
   normal_values = normal_class_values,
   abnormal_values = abnormal_class_values,
-  label = "myonuclei Classification"
+  label = if (isTRUE(filter_is_myonucleus)) "myonuclei Classification" else "all nuclei Classification"
 )
 nuc_df$class_group <- dplyr::case_when(
   nuc_df$class_canonical == "0" ~ "Normal",
@@ -515,8 +520,13 @@ myotube_filtered <- myotube_combined[, has_nuclei]
 # ---------------- SAVE OUTPUTS ----------------
 myonuclei_file <- file.path(output_dir, output_myonuclei_filename)
 myotube_file <- file.path(output_dir, output_myotube_filename)
+myonuclei_all_nuclei_file <- NULL
 
 saveRDS(myonuclei, myonuclei_file, compress = FALSE)
+if (!isTRUE(filter_is_myonucleus)) {
+  myonuclei_all_nuclei_file <- file.path(output_dir, output_myonuclei_all_nuclei_filename)
+  saveRDS(filtered_nuclei, myonuclei_all_nuclei_file, compress = FALSE)
+}
 saveRDS(myotube_filtered, myotube_file, compress = FALSE)
 
 # ---------------- SUMMARY PRINTS ----------------
@@ -541,6 +551,7 @@ cat("  Filtered nuclei missing Sigmoid_Logits: ", sigmoid_logits_missing, "\n", 
 
 cat("\nMyonuclei\n")
 cat("  Count: ", ncol(myonuclei), "\n", sep = "")
+cat("  Nuclei used for downstream counts: ", ncol(nuclei_for_tube), "\n", sep = "")
 
 cat("\nFiltered nuclei Classification counts:\n")
 print(sort(table(colData(filtered_nuclei)$Classification, useNA = "ifany"), decreasing = TRUE))
@@ -560,5 +571,8 @@ print(slide_stats_df)
 
 cat("\nSaved files:\n")
 cat(" - ", myonuclei_file, "\n", sep = "")
+if (!is.null(myonuclei_all_nuclei_file)) {
+  cat(" - ", myonuclei_all_nuclei_file, "\n", sep = "")
+}
 cat(" - ", myotube_file, "\n", sep = "")
 cat("=============================\n")
