@@ -36,23 +36,22 @@ from tqdm import tqdm
 import time
 
 from utils.cosmx_utils import (
-    extract_fov_token_from_target_csv,
-    load_polygons_for_fov,
-    assign_counts,
     assign_counts_fast,
     load_gene_list,
-    load_field_to_cell_line,
-    pack_contours,
-    make_contours_storage,
     print_adata_summary,
     extract_fov_token_from_name,
+    extract_patch_index_from_mask,
     make_cell_line_resolver,
-    is_edge_polygon,
-    compute_morphology_features,
     group_mask_paths_by_fov,
     load_polygons_from_paths,
     assign_nuclei_to_myotubes,  # Newly added
     assign_counts_raster,       # Newly added (for myotubes)
+)
+from utils.cosmx_aberration_utils import add_nuclear_aberration_features
+from utils.cosmx_h5ad_utils import (
+    build_myotube_intensity_drop_map,
+    create_anndata_from_objects,
+    filter_myotubes_by_intensity,
 )
 
 def parse_args():
@@ -81,6 +80,15 @@ def parse_args():
     )
     parser.add_argument('--myhc_metadata', metavar='MYHC_METADATA', default=None, help='Optional CSV with myotube metadata for intensity filtering')
     parser.add_argument('--myhc_intensity_threshold', type=float, default=15, help='Minimum average_intensity to keep myotubes (8-bit scale)')
+    parser.add_argument(
+        '--nuclear_aberration_path',
+        '--nuclear_aberration_paths',
+        dest='nuclear_aberration_path',
+        metavar='NUCLEAR_ABERRATION_PATH',
+        nargs='+',
+        default=None,
+        help='Optional one or more paths to per-patch PNG sigmoid predictions for nuclear structural aberration (0-255 scale)',
+    )
     
     parser.add_argument('--target_coords_path', metavar='TARGET_COORDS_PATH', help='Path to directory containing per-field subfolders (e.g., FOV00001) with target_call_coord.csv')
     parser.add_argument('--savepath', metavar='SAVEPATH', help='path to save .h5ad files')
@@ -95,114 +103,64 @@ def parse_args():
 
     return parser.parse_args()
 
-def _build_myotube_intensity_drop_map(metadata_path: Path, intensity_threshold: float):
-    """Build image-stem -> set(object_idx) for myotubes to remove by intensity."""
-    meta = pd.read_csv(metadata_path)
-    required_cols = {'image_name', 'average_intensity'}
-    missing = required_cols - set(meta.columns)
-    if missing:
-        raise ValueError(f"Missing required columns in --myhc_metadata: {missing}")
+def _polygon_centroid(poly):
+    """Return area-weighted polygon centroid in pixel coordinates."""
+    pts = np.asarray(poly, dtype=np.float64)
+    if pts.size == 0:
+        return np.nan, np.nan
+    if pts.ndim != 2 or pts.shape[1] != 2 or pts.shape[0] < 3:
+        centroid = np.nanmean(pts.reshape(-1, 2), axis=0)
+        return float(centroid[0]), float(centroid[1])
 
-    idx_col = None
-    for candidate in ('contour_idx', 'assignment_idx', 'myotube_id'):
-        if candidate in meta.columns:
-            idx_col = candidate
-            break
-    if idx_col is None:
-        raise ValueError(
-            "Could not map metadata rows to contour objects: expected one of "
-            "['contour_idx', 'assignment_idx', 'myotube_id'] in --myhc_metadata"
-        )
+    x = pts[:, 0]
+    y = pts[:, 1]
+    x_next = np.roll(x, -1)
+    y_next = np.roll(y, -1)
+    cross = x * y_next - x_next * y
+    twice_area = np.sum(cross)
+    if np.isclose(twice_area, 0.0):
+        centroid = np.nanmean(pts, axis=0)
+        return float(centroid[0]), float(centroid[1])
 
-    work = meta.copy()
-    work['_image_stem'] = work['image_name'].astype(str).str.replace(r"\.[^.]+$", "", regex=True)
-    intensity_vals = pd.to_numeric(work['average_intensity'], errors='coerce')
-    idx_vals = pd.to_numeric(work[idx_col], errors='coerce')
-    fail_mask = intensity_vals < float(intensity_threshold)
-    valid_mask = fail_mask & idx_vals.notna() & work['_image_stem'].notna()
+    cx = np.sum((x + x_next) * cross) / (3.0 * twice_area)
+    cy = np.sum((y + y_next) * cross) / (3.0 * twice_area)
+    return float(cx), float(cy)
 
-    to_drop = work.loc[valid_mask, ['_image_stem']].copy()
-    to_drop['obj_idx'] = idx_vals.loc[valid_mask].astype(np.int64).to_numpy()
-
-    drop_map = {}
-    if not to_drop.empty:
-        for image_stem, sub_df in to_drop.groupby('_image_stem', sort=False):
-            drop_map[str(image_stem)] = set(int(v) for v in sub_df['obj_idx'].tolist())
-
-    summary = {
-        'rows_total': int(work.shape[0]),
-        'rows_below_threshold': int(fail_mask.sum()),
-        'rows_mapped': int(valid_mask.sum()),
-        'index_column': idx_col,
-    }
-    return drop_map, summary
-
-def _filter_myotubes_by_intensity(myotube_objs, drop_map):
-    """Remove objects whose (image_name-stem, per-image index) appears in drop_map."""
-    if not drop_map:
-        return myotube_objs, 0
-
-    kept = []
-    removed = 0
-    image_to_next_idx = {}
-    for obj in myotube_objs:
-        image_stem = Path(str(obj.get('image_name', ''))).stem
-        local_idx = image_to_next_idx.get(image_stem, 0)
-        image_to_next_idx[image_stem] = local_idx + 1
-
-        drop_set = drop_map.get(image_stem)
-        if drop_set is not None and local_idx in drop_set:
-            removed += 1
+def _infer_canvas_size(mask_paths, objects, patch_size: int, grid_cols: int):
+    grid_cols = max(1, int(grid_cols))
+    max_patch_idx = -1
+    for path in mask_paths:
+        try:
+            max_patch_idx = max(max_patch_idx, int(extract_patch_index_from_mask(Path(path))))
+        except Exception:
             continue
-        kept.append(obj)
-    return kept, removed
+    for obj in objects:
+        try:
+            max_patch_idx = max(max_patch_idx, int(obj["patch_idx"]))
+        except Exception:
+            continue
 
-def create_anndata_from_objects(objects, counts, genes_out, fov_token, cell_line, patch_size, edge_threshold, prefix="obj", verbose=False):
-    """Helper to create AnnData for a set of objects."""
-    t0 = time.perf_counter()
-    is_edge = [is_edge_polygon(obj['local_polygon'], patch_size, edge_threshold) for obj in objects]
-    image_names = [obj['image_name'] for obj in objects]
-    if verbose:
-        print(f"[{fov_token}] computed edge flags for {len(objects)} objs in {time.perf_counter()-t0:.2f}s", flush=True)
-    
-    obs = pd.DataFrame({
-        'object_id': [f"{fov_token}_{prefix}_{i}" for i in range(len(objects))],
-        'field': [fov_token] * len(objects),
-        'patch_idx': [obj['patch_idx'] for obj in objects],
-        'Cell Line': [cell_line] * len(objects),
-        'is_edge': is_edge,
-        'image_name': image_names,
-    })
-    
-    var = pd.DataFrame(index=pd.Index(genes_out, name='gene'))
-    X = csr_matrix(counts)
-    adata = ad.AnnData(X=X, obs=obs, var=var)
-    
-    t2 = time.perf_counter()
-    local_contours = [obj['local_polygon'] for obj in objects]
-    contours_store = make_contours_storage(local_contours)
-    offsets_arr = np.asarray([obj['offset'] for obj in objects], dtype=np.float32)
-    
-    adata.uns['Object Contours'] = {
-        'Contours': contours_store,
-        'Contour offsets': offsets_arr,
-    }
-    if verbose:
-        print(f"[{fov_token}] stored contours ({len(local_contours)} objects) in {time.perf_counter()-t2:.2f}s", flush=True)
-    
-    t3 = time.perf_counter()
-    morph_arr, morph_cols = compute_morphology_features(local_contours)
-    adata.obsm['morphology_features'] = morph_arr
-    adata.uns['morphology_feature_columns'] = morph_cols
-    if verbose:
-        print(f"[{fov_token}] computed morphology for {len(local_contours)} objs in {time.perf_counter()-t3:.2f}s", flush=True)
-    
-    if not issparse(adata.X):
-        adata.X = csr_matrix(adata.X)
-        
-    return adata
+    if max_patch_idx < 0:
+        max_patch_idx = grid_cols - 1
 
-def _process_field(field: Path, target_coords_path: Path, nuclei_paths, myotube_paths, fov_token: str, genes: list, patch_size: int, grid_cols: int, cell_line: str, edge_threshold: int, overlap_threshold: float, out_dir: Path, myotube_drop_map=None, myhc_intensity_threshold: float = 15, assignment_rule: str = 'greedy', random_seed: int = 0, verbose: bool = False):
+    n_rows = (max_patch_idx // grid_cols) + 1
+    return float(grid_cols * patch_size), float(max(1, n_rows) * patch_size)
+
+def _add_normalized_centroid_obs(adata, objects, canvas_size):
+    canvas_width, canvas_height = canvas_size
+    scale = np.array([canvas_width, canvas_height], dtype=np.float64)
+    centroids = []
+    for obj in objects:
+        cx, cy = _polygon_centroid(obj["polygon"])
+        norm = np.array([cx, cy], dtype=np.float64) / scale
+        norm = np.clip(norm, 0.0, 1.0)
+        if np.any(~np.isfinite(norm)):
+            centroids.append("")
+        else:
+            centroids.append(f"({norm[0]:.8f}, {norm[1]:.8f})")
+    adata.obs["centroid"] = centroids
+
+def _process_field(field: Path, target_coords_path: Path, nuclei_paths, myotube_paths, fov_token: str, genes: list, patch_size: int, grid_cols: int, cell_line: str, edge_threshold: int, overlap_threshold: float, out_dir: Path, myotube_drop_map=None, myhc_intensity_threshold: float = 15, assignment_rule: str = 'greedy', random_seed: int = 0, nuclear_aberration_paths=None, verbose: bool = False):
     t_all = time.perf_counter()
     target_coords = pd.read_csv(target_coords_path)
     if verbose:
@@ -219,7 +177,7 @@ def _process_field(field: Path, target_coords_path: Path, nuclei_paths, myotube_
     myotube_objs = load_polygons_from_paths(myotube_paths, patch_size, grid_cols)
     if myotube_drop_map is not None:
         myotube_before = len(myotube_objs)
-        myotube_objs, myotube_removed = _filter_myotubes_by_intensity(myotube_objs, myotube_drop_map)
+        myotube_objs, myotube_removed = filter_myotubes_by_intensity(myotube_objs, myotube_drop_map)
         if verbose:
             print(
                 f"[{fov_token}] myotube intensity filter removed {myotube_removed}/{myotube_before} "
@@ -290,6 +248,9 @@ def _process_field(field: Path, target_coords_path: Path, nuclei_paths, myotube_
     t5 = time.perf_counter()
     adata_nuclei = create_anndata_from_objects(nuclei_objs, n_counts, n_genes, fov_token, cell_line, patch_size, edge_threshold, prefix="nuc", verbose=verbose)
     adata_myotubes = create_anndata_from_objects(myotube_objs, m_counts, m_genes, fov_token, cell_line, patch_size, edge_threshold, prefix="myo", verbose=verbose)
+    canvas_size = _infer_canvas_size([*nuclei_paths, *myotube_paths], [*nuclei_objs, *myotube_objs], patch_size, grid_cols)
+    _add_normalized_centroid_obs(adata_nuclei, nuclei_objs, canvas_size)
+    _add_normalized_centroid_obs(adata_myotubes, myotube_objs, canvas_size)
     # Add local IDs to obs for convenience
     adata_nuclei.obs['local_id'] = np.array(nuc_local_ids, dtype=np.int32)
     adata_myotubes.obs['local_id'] = np.array(myo_local_ids, dtype=np.int32)
@@ -324,6 +285,19 @@ def _process_field(field: Path, target_coords_path: Path, nuclei_paths, myotube_
         m_id = f"{fov_token}_patch_{m_patch}_myotube_{m_local}"
         id_map[n_id] = m_id
     adata_myotubes.uns['nuclei_to_myotube_map'] = id_map
+
+    if nuclear_aberration_paths is not None:
+        add_nuclear_aberration_features(
+            adata_nuclei=adata_nuclei,
+            adata_myotubes=adata_myotubes,
+            nuclei_objs=nuclei_objs,
+            myotube_objs=myotube_objs,
+            assignment_map=assignment_map,
+            nuclear_aberration_paths=nuclear_aberration_paths,
+            patch_size=patch_size,
+            fov_token=fov_token,
+            verbose=verbose,
+        )
     
     # 6. Save separate files
     path_nuclei = out_dir / f"{fov_token}_nuclei.h5ad"
@@ -343,6 +317,8 @@ def main(args):
     myotube_dir = Path(args.myotube_contour_path)
     target_dir = Path(args.target_coords_path)
     save_dir = Path(args.savepath)
+    nuclear_aberration_model_dirs = None
+    fov_to_nuclear_aberration_by_model = []
     
     save_dir.mkdir(parents=True, exist_ok=True)
     field_dir = save_dir / 'field_data'
@@ -356,10 +332,32 @@ def main(args):
     
     fov_to_nuclei = group_mask_paths_by_fov(nuclei_paths)
     fov_to_myotubes = group_mask_paths_by_fov(myotube_paths)
+
+    if args.nuclear_aberration_path:
+        nuclear_aberration_model_dirs = [Path(p) for p in args.nuclear_aberration_path]
+        for model_idx, nuclear_aberration_dir in enumerate(nuclear_aberration_model_dirs, start=1):
+            if not nuclear_aberration_dir.exists():
+                raise FileNotFoundError(f"--nuclear_aberration_path does not exist: {nuclear_aberration_dir}")
+            if not nuclear_aberration_dir.is_dir():
+                raise NotADirectoryError(f"--nuclear_aberration_path must be a directory: {nuclear_aberration_dir}")
+
+            model_paths = list(nuclear_aberration_dir.glob('*.png')) + list(nuclear_aberration_dir.glob('*.PNG'))
+            fov_to_nuclear_aberration_by_model.append(group_mask_paths_by_fov(model_paths))
+            print(
+                f"Found {len(model_paths)} nuclear aberration prediction PNGs "
+                f"for model {model_idx}: {nuclear_aberration_dir}",
+                flush=True,
+            )
     
     field_dirs = sorted([p for p in target_dir.iterdir() if p.is_dir()])
     
     print(f"Found {len(nuclei_paths)} nuclei masks, {len(myotube_paths)} myotube masks, {len(field_dirs)} field folders")
+    if nuclear_aberration_model_dirs is not None:
+        print(
+            f"Using {len(nuclear_aberration_model_dirs)} nuclear aberration model prediction "
+            f"director{'y' if len(nuclear_aberration_model_dirs) == 1 else 'ies'}",
+            flush=True,
+        )
 
     genes = load_gene_list(Path(args.genes_csv))
     print(f"Loaded {len(genes)} genes")
@@ -371,7 +369,7 @@ def main(args):
         metadata_path = Path(args.myhc_metadata)
         if not metadata_path.exists():
             raise FileNotFoundError(f"--myhc_metadata does not exist: {metadata_path}")
-        myotube_drop_map, filter_summary = _build_myotube_intensity_drop_map(
+        myotube_drop_map, filter_summary = build_myotube_intensity_drop_map(
             metadata_path,
             args.myhc_intensity_threshold,
         )
@@ -397,6 +395,11 @@ def main(args):
         
         n_paths = fov_to_nuclei.get(fov_token, [])
         m_paths = fov_to_myotubes.get(fov_token, [])
+        a_paths = (
+            [fov_map.get(fov_token, []) for fov_map in fov_to_nuclear_aberration_by_model]
+            if nuclear_aberration_model_dirs is not None
+            else None
+        )
         
         cell_line = resolve_cell_line(fov_token)
         
@@ -417,6 +420,7 @@ def main(args):
             args.myhc_intensity_threshold,
             args.assignment_rule,
             args.random_seed,
+            a_paths,
             args.verbose
         ))
         
@@ -462,6 +466,12 @@ def main(args):
             combined = ad.concat(adatas, axis=0, join='outer')
             if not issparse(combined.X):
                 combined.X = csr_matrix(combined.X)
+            if nuclear_aberration_model_dirs is not None:
+                combined.uns['nuclear_aberration_ensemble'] = {
+                    'ensemble_method': 'mean',
+                    'n_models': int(len(nuclear_aberration_model_dirs)),
+                    'model_dirs': [str(p) for p in nuclear_aberration_model_dirs],
+                }
             out_path = combined_dir / f'combined_{name}.h5ad'
             combined.write_h5ad(out_path)
             print(f"Saved {out_path}", flush=True)
