@@ -36,6 +36,7 @@ myonuclei_morphology_features <- c(
   "Sigmoid_Logits",
   "area_px2",
   "perimeter_px",
+  "circularity",
   "major_axis_length_px"
 )
 myotube_morphology_features <- c(
@@ -62,6 +63,7 @@ effect_thr <- 0.15
 min_myonuclei_per_myotube <- 1L
 filter_myonuclei <- TRUE
 myonucleus_col <- "is_myonucleus"
+derive_missing_circularity <- TRUE
 
 # ---------------- OPTIONAL CLI OVERRIDES ----------------
 # Supports:
@@ -88,7 +90,8 @@ myonucleus_col <- "is_myonucleus"
 #   --slide_covariate TRUE \
 #   --min_myonuclei_per_myotube 2 \
 #   --filter_myonuclei TRUE \
-#   --myonucleus_col is_myonucleus
+#   --myonucleus_col is_myonucleus \
+#   --derive_missing_circularity TRUE
 overrides <- parse_cli_overrides(commandArgs(trailingOnly = TRUE))
 apply_cli_overrides(overrides)
 
@@ -144,6 +147,7 @@ cat("effect_thr:             ", effect_thr, "\n", sep = "")
 cat("min_myonuclei_per_myotube:", min_myonuclei_per_myotube, "\n", sep = "")
 cat("filter_myonuclei:       ", filter_myonuclei, "\n", sep = "")
 cat("myonucleus_col:         ", myonucleus_col, "\n", sep = "")
+cat("derive_missing_circularity:", derive_missing_circularity, "\n", sep = "")
 cat("====================================================\n\n")
 
 cat("========== PREDICTOR TRANSFORM PLAN ==========\n")
@@ -182,7 +186,8 @@ nbglm_run_workflow(
   effect_thr = effect_thr,
   min_myonuclei_per_myotube = min_myonuclei_per_myotube,
   filter_myonuclei = filter_myonuclei,
-  myonucleus_col = myonucleus_col
+  myonucleus_col = myonucleus_col,
+  derive_missing_circularity = derive_missing_circularity
 )
 
 message(sprintf(

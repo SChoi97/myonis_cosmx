@@ -1,0 +1,247 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="85mm"
+     height="53.8mm"
+     viewBox="0 0 1200 760"
+     role="img"
+     aria-labelledby="figure-title figure-description">
+  <title id="figure-title">Nuclear groups in rupture-positive and rupture-negative myotubes</title>
+  <desc id="figure-description">Panel A schematic showing a ruptured myonucleus, proximal and distal intact myonuclei in the same myotube, and an intact control myonucleus in a rupture-negative myotube.</desc>
+
+  <!-- The canvas is intentionally transparent for direct placement in a figure layout. -->
+  <g id="panel-label">
+    <text x="24" y="60"
+          fill="#202124"
+          font-family="Arial, Helvetica, sans-serif"
+          font-size="64"
+          font-weight="700">A</text>
+  </g>
+
+  <g id="condition-headings"
+     fill="#202124"
+     font-family="Arial, Helvetica, sans-serif"
+     font-size="38"
+     font-weight="700"
+     text-anchor="middle">
+    <text x="360" y="36">
+      <tspan x="360" dy="0">Rupture-positive</tspan>
+      <tspan x="360" dy="40">myotube</tspan>
+    </text>
+    <text x="935" y="36">
+      <tspan x="935" dy="0">Rupture-negative</tspan>
+      <tspan x="935" dy="40">control myotube</tspan>
+    </text>
+  </g>
+
+  <g id="myotube-rupture-positive">
+    <path d="M 180,96
+             C 164,190 170,286 185,374
+             C 201,470 176,566 186,770
+             L 542,770
+             C 551,568 525,472 538,374
+             C 551,278 530,185 544,96
+             Z"
+          fill="#F5DDE2"
+          stroke="#B56B82"
+          stroke-width="4"
+          stroke-linejoin="round"/>
+    <path d="M 212,96
+             C 201,196 207,282 220,371
+             C 232,463 214,565 221,770"
+          fill="none"
+          stroke="#FFFFFF"
+          stroke-width="18"
+          stroke-linecap="round"
+          opacity="0.38"/>
+  </g>
+
+  <g id="myotube-rupture-negative-control">
+    <path d="M 780,96
+             C 764,194 775,286 786,376
+             C 798,470 773,570 782,770
+             L 1091,770
+             C 1100,570 1075,472 1088,376
+             C 1101,282 1081,188 1095,96
+             Z"
+          fill="#DDEFF2"
+          stroke="#568C98"
+          stroke-width="4"
+          stroke-linejoin="round"/>
+    <path d="M 813,96
+             C 802,194 811,284 820,374
+             C 830,468 812,568 817,770"
+          fill="none"
+          stroke="#FFFFFF"
+          stroke-width="18"
+          stroke-linecap="round"
+          opacity="0.42"/>
+  </g>
+
+  <g id="distance-from-rupture"
+     fill="none"
+     stroke="#514B53"
+     stroke-width="3"
+     stroke-linecap="round">
+    <line x1="242" y1="220" x2="242" y2="600"/>
+    <line x1="230" y1="220" x2="254" y2="220"/>
+    <line x1="230" y1="405" x2="254" y2="405"/>
+    <line x1="230" y1="600" x2="254" y2="600"/>
+  </g>
+  <text id="distance-label"
+        x="208" y="410"
+        transform="rotate(-90 208 410)"
+        fill="#514B53"
+        font-family="Arial, Helvetica, sans-serif"
+        font-size="32"
+        font-weight="400"
+        text-anchor="middle">Distance from rupture</text>
+
+  <g id="distal-intact-myonucleus" transform="translate(348 220) rotate(-16)">
+    <ellipse cx="0" cy="0" rx="54" ry="38"
+             fill="#B79BC2"
+             stroke="#654D73"
+             stroke-width="4"/>
+    <ellipse cx="0" cy="0" rx="46" ry="31"
+             fill="none"
+             stroke="#E9DDEA"
+             stroke-width="3"
+             opacity="0.9"/>
+    <circle cx="-20" cy="-8" r="6" fill="#896A99"/>
+    <circle cx="5" cy="-14" r="5" fill="#896A99"/>
+    <circle cx="22" cy="4" r="7" fill="#896A99"/>
+    <circle cx="-7" cy="12" r="6" fill="#896A99"/>
+    <circle cx="-29" cy="10" r="4" fill="#896A99"/>
+  </g>
+
+  <g id="proximal-intact-myonucleus" transform="translate(348 405) rotate(-16)">
+    <ellipse cx="0" cy="0" rx="54" ry="38"
+             fill="#B79BC2"
+             stroke="#654D73"
+             stroke-width="4"/>
+    <ellipse cx="0" cy="0" rx="46" ry="31"
+             fill="none"
+             stroke="#E9DDEA"
+             stroke-width="3"
+             opacity="0.9"/>
+    <circle cx="-21" cy="-7" r="6" fill="#896A99"/>
+    <circle cx="5" cy="-14" r="5" fill="#896A99"/>
+    <circle cx="22" cy="4" r="7" fill="#896A99"/>
+    <circle cx="-7" cy="12" r="6" fill="#896A99"/>
+    <circle cx="-29" cy="10" r="4" fill="#896A99"/>
+  </g>
+
+  <g id="ruptured-myonucleus">
+    <ellipse cx="348" cy="600" rx="55" ry="41"
+             fill="#D6C2DC"/>
+    <path d="M 301,621
+             C 291,604 294,580 309,567
+             C 327,550 357,553 375,563
+             C 386,570 392,579 393,587"
+          fill="none"
+          stroke="#7D4A92"
+          stroke-width="5"
+          stroke-linecap="round"/>
+    <path d="M 390,608
+             C 384,624 366,637 346,641
+             C 326,644 309,636 301,621"
+          fill="none"
+          stroke="#7D4A92"
+          stroke-width="5"
+          stroke-linecap="round"/>
+    <polygon points="387,584 405,598 387,612"
+             fill="#F5DDE2"/>
+    <path d="M 318,606
+             C 326,590 337,612 347,593
+             C 357,577 367,598 376,584"
+          fill="none"
+          stroke="#9A72AA"
+          stroke-width="6"
+          stroke-linecap="round"
+          stroke-linejoin="round"/>
+    <circle cx="322" cy="579" r="6" fill="#8A5F9C"/>
+    <circle cx="344" cy="620" r="7" fill="#8A5F9C"/>
+    <circle cx="369" cy="613" r="5" fill="#8A5F9C"/>
+    <circle cx="409" cy="592" r="5" fill="#7D4A92"/>
+    <circle cx="422" cy="584" r="4" fill="#7D4A92"/>
+    <circle cx="429" cy="603" r="5" fill="#7D4A92"/>
+    <circle cx="443" cy="593" r="3.5" fill="#7D4A92"/>
+  </g>
+
+  <g id="control-intact-myonucleus" transform="translate(930 405) rotate(-16)">
+    <ellipse cx="0" cy="0" rx="54" ry="38"
+             fill="#8BB5C7"
+             stroke="#3F7184"
+             stroke-width="4"/>
+    <ellipse cx="0" cy="0" rx="46" ry="31"
+             fill="none"
+             stroke="#DDEFF4"
+             stroke-width="3"
+             opacity="0.95"/>
+    <circle cx="-21" cy="-7" r="6" fill="#5E8FA7"/>
+    <circle cx="5" cy="-14" r="5" fill="#5E8FA7"/>
+    <circle cx="22" cy="4" r="7" fill="#5E8FA7"/>
+    <circle cx="-7" cy="12" r="6" fill="#5E8FA7"/>
+    <circle cx="-29" cy="10" r="4" fill="#5E8FA7"/>
+  </g>
+
+  <g id="group-labels"
+     font-family="Arial, Helvetica, sans-serif">
+    <g id="group-d-label">
+      <circle cx="570" cy="220" r="19" fill="#76517F"/>
+      <text x="570" y="230"
+            fill="#FFFFFF"
+            font-size="32"
+            font-weight="700"
+            text-anchor="middle">D</text>
+      <text x="600" y="232"
+            fill="#2C2930"
+            font-size="36"
+            font-weight="400">
+        Distal
+      </text>
+    </g>
+
+    <g id="group-p-label">
+      <circle cx="570" cy="405" r="19" fill="#76517F"/>
+      <text x="570" y="415"
+            fill="#FFFFFF"
+            font-size="32"
+            font-weight="700"
+            text-anchor="middle">P</text>
+      <text x="600" y="417"
+            fill="#2C2930"
+            font-size="36"
+            font-weight="400">
+        Proximal
+      </text>
+    </g>
+
+    <g id="group-r-label">
+      <circle cx="570" cy="600" r="19" fill="#7D4A92"/>
+      <text x="570" y="610"
+            fill="#FFFFFF"
+            font-size="32"
+            font-weight="700"
+            text-anchor="middle">R</text>
+      <text x="600" y="612"
+            fill="#2C2930"
+            font-size="36"
+            font-weight="400">Ruptured</text>
+    </g>
+
+    <g id="group-c-label">
+      <circle cx="1025" cy="405" r="19" fill="#3E7485"/>
+      <text x="1025" y="415"
+            fill="#FFFFFF"
+            font-size="32"
+            font-weight="700"
+            text-anchor="middle">C</text>
+      <text x="1055" y="417"
+            fill="#2C2930"
+            font-size="36"
+            font-weight="400">
+        Control
+      </text>
+    </g>
+  </g>
+</svg>

@@ -7,6 +7,8 @@ models/*
 minisam_env/*
 scripts/*
 notebooks/*
+scvi/results/*
+downstream_analysis/*
 /*.out
 /*.sh
 *.sh
@@ -34,3 +36,13 @@ unet.sh
 *.tiff
 *.ico
 *.out
+*.codex
+*.nbc
+*.nbi
+*.log
+*.DS_Store
+*.pdf
+*.h5ad
+*.npz
+*.err
+*.xlsx

@@ -27,6 +27,12 @@ CLASSIFIER_KEY_COLUMNS = [
     "cell_line_key",
     "local_id_key",
 ]
+DEFAULT_MORPHOLOGY_FEATURE_COLUMNS = [
+    "area_px2",
+    "perimeter_px",
+    "circularity",
+    "major_axis_length_px",
+]
 CLASSIFIER_IMAGE_PATTERN = (
     r"^field_(?P<field>[^_]+)_patch_(?P<patch_idx>\d+)_"
     r"cellline_(?P<cell_line>.+?)_localid_(?P<local_id>\d+)$"
@@ -234,8 +240,11 @@ def parse_args():
     parser.add_argument(
         "--copy-uns-keys",
         nargs="*",
-        default=["morphology_feature_columns", "Object Contours"],
-        help="Selected uns keys to copy to the latent h5ad. Use 'none' to copy no uns keys.",
+        default=["all"],
+        help=(
+            "uns keys to copy to both latent and decoded-expression h5ad files. "
+            "Default: all. Use 'none' to copy no uns keys, or provide selected keys."
+        ),
     )
     return parser.parse_args()
 
@@ -486,6 +495,41 @@ def prepare_covariates(
     return continuous_keys, categorical_keys
 
 
+def ensure_morphology_feature_metadata(adata):
+    """Ensure names for row-aligned obsm['morphology_features'] are stored in uns."""
+    obsm_key = "morphology_features"
+    uns_key = "morphology_feature_columns"
+    if obsm_key not in adata.obsm:
+        return {"status": "missing_morphology_features"}
+
+    morphology = adata.obsm[obsm_key]
+    if getattr(morphology, "ndim", None) != 2:
+        raise ValueError(f"obsm[{obsm_key!r}] must be two-dimensional.")
+    n_features = int(morphology.shape[1])
+
+    if uns_key in adata.uns:
+        columns = [str(column) for column in np.asarray(adata.uns[uns_key]).reshape(-1)]
+        status = "preserved_from_input"
+    elif n_features == len(DEFAULT_MORPHOLOGY_FEATURE_COLUMNS):
+        columns = list(DEFAULT_MORPHOLOGY_FEATURE_COLUMNS)
+        status = "restored_default_columns"
+    else:
+        columns = [f"morphology_feature_{i}" for i in range(n_features)]
+        status = "generated_generic_columns"
+        warnings.warn(
+            f"obsm[{obsm_key!r}] has {n_features} columns but uns[{uns_key!r}] is missing; "
+            "using generic morphology feature names."
+        )
+
+    if len(columns) != n_features:
+        raise ValueError(
+            f"uns[{uns_key!r}] has {len(columns)} names but obsm[{obsm_key!r}] "
+            f"has {n_features} columns."
+        )
+    adata.uns[uns_key] = columns
+    return {"status": status, "columns": columns}
+
+
 def copy_obsm(adata):
     copied = {}
     for key in adata.obsm.keys():
@@ -500,6 +544,8 @@ def copy_obsm(adata):
 def copy_uns_keys(adata, keys):
     if not keys or any(str(key).lower() == "none" for key in keys):
         return {}
+    if any(str(key).lower() == "all" for key in keys):
+        return {key: copy.deepcopy(value) for key, value in adata.uns.items()}
     copied = {}
     for key in keys:
         if key in adata.uns:
@@ -940,6 +986,7 @@ def write_library_size_adjusted_expression(
     latent_mean,
     latent_output,
     copied_obsm,
+    copied_uns,
     method,
     library_size,
     batch_size,
@@ -984,6 +1031,8 @@ def write_library_size_adjusted_expression(
     for key, value in copied_obsm.items():
         if key not in expression_adata.obsm:
             expression_adata.obsm[key] = value
+    for key, value in copied_uns.items():
+        expression_adata.uns[key] = copy.deepcopy(value)
 
     expression_adata.uns["scvi_library_size_adjusted_expression"] = {
         **decoding_metadata,
@@ -1201,6 +1250,9 @@ def main():
         query_mode,
     )
     preprocessing_summary["classifier_metadata_summary"] = classifier_metadata_summary
+    preprocessing_summary["morphology_feature_metadata"] = ensure_morphology_feature_metadata(
+        adata_query
+    )
 
     obs_out = adata_query.obs.copy()
     obs_out["total_counts"] = row_sums(get_matrix(adata_query, counts_layer)).astype(np.float32)
@@ -1322,6 +1374,7 @@ def main():
             latent_mean=latent_mean,
             latent_output=latent,
             copied_obsm=obsm_out,
+            copied_uns=uns_out,
             method=args.library_size_adjusted_expression_method,
             library_size=args.normalized_library_size,
             batch_size=args.normalized_expression_batch_size,

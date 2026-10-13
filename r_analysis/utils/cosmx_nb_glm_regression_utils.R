@@ -1963,6 +1963,89 @@ nbglm_filter_loaded_object <- function(sce, object_type,
   sce
 }
 
+nbglm_ensure_nuclear_circularity <- function(
+  sce,
+  requested_features,
+  derive_missing_circularity = TRUE,
+  circularity_col = "circularity",
+  area_col = "area_px2",
+  perimeter_col = "perimeter_px"
+) {
+  requested_features <- nbglm_parse_list_arg(requested_features)
+  if (!isTRUE(derive_missing_circularity) ||
+      !(circularity_col %in% requested_features)) {
+    return(sce)
+  }
+
+  cd <- SummarizedExperiment::colData(sce)
+  if (circularity_col %in% colnames(cd)) {
+    existing <- suppressWarnings(as.numeric(as.character(cd[[circularity_col]])))
+    finite_existing <- is.finite(existing)
+    if (sum(finite_existing) >= 2L &&
+        is.finite(stats::sd(existing[finite_existing])) &&
+        stats::sd(existing[finite_existing]) > 0) {
+      message(sprintf(
+        "[myonuclei] Using existing %s column (%d/%d finite values).",
+        circularity_col,
+        sum(finite_existing),
+        length(existing)
+      ))
+      return(sce)
+    }
+    warning(
+      "[myonuclei] Existing ", circularity_col,
+      " column is unusable; deriving it from ", area_col, " and ", perimeter_col, "."
+    )
+  }
+
+  missing_components <- setdiff(c(area_col, perimeter_col), colnames(cd))
+  if (length(missing_components)) {
+    stop(
+      "[myonuclei] Cannot derive ", circularity_col,
+      "; missing colData column(s): ",
+      paste(missing_components, collapse = ", "),
+      ". Available columns: ",
+      paste(colnames(cd), collapse = ", ")
+    )
+  }
+
+  area <- suppressWarnings(as.numeric(as.character(cd[[area_col]])))
+  perimeter <- suppressWarnings(as.numeric(as.character(cd[[perimeter_col]])))
+  valid <- is.finite(area) & is.finite(perimeter) & area > 0 & perimeter > 0
+  if (sum(valid) < 2L) {
+    stop(
+      "[myonuclei] Cannot derive ", circularity_col,
+      "; fewer than 2 observations have finite positive ", area_col,
+      " and ", perimeter_col, " values."
+    )
+  }
+
+  circularity <- rep(NA_real_, length(area))
+  circularity[valid] <- 4 * pi * area[valid] / (perimeter[valid]^2)
+  circularity[valid] <- pmin(pmax(circularity[valid], 0), 1)
+  if (!is.finite(stats::sd(circularity[valid])) ||
+      stats::sd(circularity[valid]) <= 0) {
+    stop("[myonuclei] Derived ", circularity_col, " has no variation.")
+  }
+
+  cd[[circularity_col]] <- circularity
+  SummarizedExperiment::colData(sce) <- cd
+  message(sprintf(
+    paste0(
+      "[myonuclei] Derived %s = clip(4*pi*%s/%s^2, 0, 1) ",
+      "for %d/%d observations (range %.6f to %.6f)."
+    ),
+    circularity_col,
+    area_col,
+    perimeter_col,
+    sum(valid),
+    length(valid),
+    min(circularity[valid]),
+    max(circularity[valid])
+  ))
+  sce
+}
+
 nbglm_load_sce_for_object <- function(object_type, myonuclei_rds_path, myotube_rds_path,
                                       min_myonuclei_per_myotube = 1L,
                                       filter_myonuclei = TRUE,
@@ -2060,7 +2143,8 @@ nbglm_run_workflow <- function(
   effect_thr = 0.15,
   min_myonuclei_per_myotube = 1L,
   filter_myonuclei = TRUE,
-  myonucleus_col = "is_myonucleus"
+  myonucleus_col = "is_myonucleus",
+  derive_missing_circularity = TRUE
 ) {
   object_types <- nbglm_canonical_object_type(object_types)
   target_types <- nbglm_canonical_target_type(target_types)
@@ -2109,6 +2193,13 @@ nbglm_run_workflow <- function(
       myotube_morphology_features = myotube_morphology_features,
       morphology_features = morphology_features
     )
+    if (identical(object_type, "myonuclei")) {
+      sce <- nbglm_ensure_nuclear_circularity(
+        sce,
+        requested_features = object_morphology_features,
+        derive_missing_circularity = derive_missing_circularity
+      )
+    }
 
     for (morphology_feature in object_morphology_features) {
       for (target_type in target_types) {

@@ -1,0 +1,78 @@
+# Marker keys are stable feature-name prefixes. Paths belong in dataset.yaml.
+include_dapi: true  # Quantify only segmentations.nuclei.acquisition_id; all rounds still support QC.
+markers:
+  emyhc:
+    acquisition_id: measurement_01_488_emyhc
+    # Image measurements in reference nuclei and MyHC-derived myotube masks.
+    nuclear_compartments: [whole_nucleus]
+    myotube_compartments: [whole_myotube, cytoplasm]
+  lamin_a_c:
+    acquisition_id: measurement_01_555_lamin_a_c
+    nuclear_compartments: [whole_nucleus, nuclear_rim, nuclear_interior]
+  53bp1:
+    acquisition_id: measurement_01_647_53bp1
+    structure_source: "53bp1"
+    structure_parent: nucleus
+    structure_overlap_threshold: 0.8
+  rna_pol_ii:
+    acquisition_id: measurement_02_488_rna_pol_ii
+  myhc:
+    acquisition_id: measurement_02_555_myhc
+  atf3:
+    acquisition_id: measurement_02_647_atf3
+  p53:
+    acquisition_id: measurement_03_488_p53_do_1
+  myog:
+    acquisition_id: measurement_03_555_myog
+  baf:
+    acquisition_id: measurement_03_647_baf
+    structure_source: "baf"
+    structure_parent: nucleus_then_myotube
+    structure_overlap_threshold: 0.8
+  yap1:
+    acquisition_id: measurement_04_488_yap1
+    nuclear_compartments: [whole_nucleus, local_perinuclear_cytoplasm]
+  h3k27ac:
+    acquisition_id: measurement_04_555_h3k27ac
+  h3k27me3:
+    acquisition_id: measurement_04_647_h3k27me3
+  a_tubulin:
+    acquisition_id: measurement_05_488_a_tubulin
+  sc35:
+    acquisition_id: measurement_05_555_sc35
+    structure_source: "sc35"
+    structure_parent: nucleus
+    structure_overlap_threshold: 0.8
+  c_casp3:
+    acquisition_id: measurement_05_647_c_casp3
+  cgas:
+    acquisition_id: measurement_06_647_cgas
+    structure_source: "cgas"
+    structure_parent: nucleus_then_myotube
+    structure_overlap_threshold: 0.8
+  p_mlkl:
+    acquisition_id: measurement_07_647_p_mlkl
+  pten:
+    acquisition_id: measurement_08_647_pten
+    nuclear_compartments: [whole_nucleus, local_perinuclear_cytoplasm]
+  p_4ebp1:
+    acquisition_id: measurement_09_647_p_4ebp1
+    nuclear_compartments: [whole_nucleus, local_perinuclear_cytoplasm]
+  ckap4:
+    acquisition_id: measurement_10_488_ckap4
+  gm130:
+    acquisition_id: measurement_10_555_gm130
+  c_jun:
+    acquisition_id: measurement_10_647_c_jun
+  hsp60:
+    acquisition_id: measurement_11_488_hsp60
+  b_actin:
+    acquisition_id: measurement_11_555_b_actin
+  ctgf:
+    acquisition_id: measurement_11_647_ctgf
+  atf6:
+    acquisition_id: measurement_12_488_atf6
+  p_s6rp:
+    acquisition_id: measurement_12_555_p_s6rp
+  pex14:
+    acquisition_id: measurement_12_647_pex14

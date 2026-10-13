@@ -1,0 +1,15 @@
+results/
+logs/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+.venv/
+build/
+dist/
+
+# The parent repository ignores these extensions globally; these are source inputs.
+!environment.yml
+!configs/*.yaml
+!slurm/*.sh
+!src/fouri_quantification/data/*.yaml
+!src/fouri_quantification/compatibility/source_manifest.json

@@ -1,0 +1,33 @@
+{
+  "_geometry.py": {
+    "source": "generate_h5ad/utils/cosmx_utils.py",
+    "sha256": "41f09d91c1b6cbf076147a26ab57c341819add3456070b281f3a84e0b8c4f0e4",
+    "functions": [
+      "extract_patch_index_from_mask",
+      "read_yolov8_segmentation_polygons",
+      "compute_bbox",
+      "is_edge_polygon",
+      "pack_contours",
+      "make_contours_storage",
+      "_polygon_area",
+      "_polygon_perimeter",
+      "_polygon_major_axis_length",
+      "_polygon_circularity",
+      "compute_morphology_features",
+      "assign_nuclei_to_myotubes"
+    ]
+  },
+  "_aberration.py": {
+    "source": "generate_h5ad/utils/cosmx_aberration_utils.py",
+    "sha256": "819311801f681d0165c3d9a4f6e6c760a8bccbf3a37bb92ca484a75ce427b49e",
+    "adaptation": "Relative import only; original function bodies retained."
+  },
+  "_filtering.py": {
+    "source": "generate_h5ad/utils/cosmx_h5ad_utils.py",
+    "sha256": "90fdb8ff37aab77783efa94d80b4f77bf867ff6cda3838a5893cb9c6e6b769a0",
+    "functions": [
+      "build_myotube_intensity_drop_map",
+      "filter_myotubes_by_intensity"
+    ]
+  }
+}
